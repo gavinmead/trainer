@@ -1,0 +1,12 @@
+[package]
+name = "sqlite"
+version = "0.1.0"
+description = "A SQLite implemention of the repositories for trainer data model"
+authors.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
