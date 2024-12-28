@@ -13,3 +13,4 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 mockall = "0.13.1"
+rstest = {workspace = true}

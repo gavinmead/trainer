@@ -8,13 +8,13 @@ pub enum ExerciseType {
     KettleBell,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)] //this is temporary until code base evolves
 pub struct Exercise {
-    id: Option<i64>,
-    name: String,
-    description: Option<String>,
-    exercise_type: ExerciseType,
+    pub id: Option<i64>,
+    pub name: String,
+    pub description: Option<String>,
+    pub exercise_type: ExerciseType,
 }
 
 pub type TrainerResult<T> = Result<T, TrainerError>;
@@ -26,6 +26,12 @@ pub enum TrainerError {
 
     #[error("PersistenceError: {0}")]
     PersistenceError(String),
+
+    #[error("ConnectionError: {0}")]
+    ConnectionError(String),
+
+    #[error("QueryError: {0}")]
+    QueryError(String),
 }
 
 pub trait ExerciseManagement {
