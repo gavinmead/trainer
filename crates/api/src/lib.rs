@@ -9,6 +9,7 @@ pub enum ExerciseType {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]//this is temporary until code base evolves
 pub struct Exercise {
     id: Option<i64>,
     name: String,
