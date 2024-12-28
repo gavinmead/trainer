@@ -70,3 +70,7 @@ run-release: release
 # Show dependency tree
 deps:
 	cargo tree
+
+cov:
+	cargo tarpaulin --engine llvm --out Html
+	open tarpaulin-report.html
