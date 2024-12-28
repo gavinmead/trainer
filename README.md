@@ -1,4 +1,7 @@
 # trainer
+![CI](https://github.com/gavinmead/trainer/actions/workflows/build.yaml/badge.svg)
+[![codecov](https://codecov.io/gh/gavinmead/trainer/graph/badge.svg?token=9GZ3A8MCMF)](https://codecov.io/gh/gavinmead/trainer)
+
 A simple application to track my strength training program
 
 The trainer is built around a very simple training protocol of 5x5 for barbell lifts (Squats, Bench Press
