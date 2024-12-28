@@ -9,7 +9,7 @@ pub enum ExerciseType {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]//this is temporary until code base evolves
+#[allow(dead_code)] //this is temporary until code base evolves
 pub struct Exercise {
     id: Option<i64>,
     name: String,
@@ -132,7 +132,7 @@ mod tests {
         mock_repo.expect_create().returning(|_x| Ok(1));
         let mgr_result = ExerciseManager::new(Box::new(mock_repo));
 
-        let mut mgr = mgr_result.unwrap();
+        let mgr = mgr_result.unwrap();
         let result = mgr.create(&mut exercise);
         assert!(result.is_ok());
         assert_eq!(exercise.id.unwrap(), 1);
@@ -156,7 +156,7 @@ mod tests {
             .returning(|_x| Err(PersistenceError("unable to create exercise".to_string())));
         let mgr_result = ExerciseManager::new(Box::new(mock_repo));
 
-        let mut mgr = mgr_result.unwrap();
+        let mgr = mgr_result.unwrap();
         let result = mgr.create(&mut exercise);
         assert!(result.is_err());
         assert!(matches!(
