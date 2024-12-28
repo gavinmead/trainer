@@ -1,9 +1,8 @@
+use crate::TrainerError::ExerciseNotFound;
 #[cfg(test)]
 use mockall::{automock, predicate::*};
-use crate::TrainerError::ExerciseNotFound;
 
-#[derive(Clone, Debug)]
-#[derive(PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExerciseType {
     Barbell,
     KettleBell,
@@ -25,7 +24,7 @@ pub enum TrainerError {
     ExerciseNotFound(String),
 
     #[error("PersistenceError: {0}")]
-    PersistenceError(String)
+    PersistenceError(String),
 }
 
 pub trait ExerciseManagement {
@@ -39,31 +38,26 @@ pub trait ExerciseManagement {
 }
 
 pub struct ExerciseManager {
-    repository: Box<ExerciseRepository>
+    repository: Box<ExerciseRepository>,
 }
 
 impl ExerciseManager {
     pub fn new(exercise_repository: Box<ExerciseRepository>) -> TrainerResult<ExerciseManager> {
-        Ok(ExerciseManager{
+        Ok(ExerciseManager {
             repository: exercise_repository,
         })
     }
 
-    fn process_query_result(result: TrainerResult<Option<Exercise>>, error_message: String) -> TrainerResult<Exercise> {
+    fn process_query_result(
+        result: TrainerResult<Option<Exercise>>,
+        error_message: String,
+    ) -> TrainerResult<Exercise> {
         match result {
-            Ok(r) => {
-                match r {
-                    None => {
-                        Err(ExerciseNotFound(error_message))
-                    }
-                    Some(e) => {
-                        Ok(e)
-                    }
-                }
-            }
-            Err(e) => {
-                Err(e)
-            }
+            Ok(r) => match r {
+                None => Err(ExerciseNotFound(error_message)),
+                Some(e) => Ok(e),
+            },
+            Err(e) => Err(e),
         }
     }
 }
@@ -76,9 +70,7 @@ impl ExerciseManagement for ExerciseManager {
                 exercise.id = Some(r);
                 Ok(())
             }
-            Err(e) => {
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -115,9 +107,9 @@ pub type ExerciseRepository = dyn Repository<Exercise>;
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::ExerciseType::Barbell;
     use crate::TrainerError::PersistenceError;
-    use super::*;
 
     #[test]
     fn create_exercise_manager() {
@@ -128,7 +120,7 @@ mod tests {
 
     #[test]
     fn create_exercise() {
-        let mut exercise = Exercise{
+        let mut exercise = Exercise {
             id: None,
             name: "Deadlift".to_string(),
             description: None,
@@ -136,9 +128,7 @@ mod tests {
         };
 
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_create().returning(|_x| {
-            Ok(1)
-        });
+        mock_repo.expect_create().returning(|_x| Ok(1));
         let mgr_result = ExerciseManager::new(Box::new(mock_repo));
 
         let mut mgr = mgr_result.unwrap();
@@ -152,7 +142,7 @@ mod tests {
 
     #[test]
     fn create_exercise_failed() {
-        let mut exercise = Exercise{
+        let mut exercise = Exercise {
             id: None,
             name: "Deadlift".to_string(),
             description: None,
@@ -160,9 +150,9 @@ mod tests {
         };
 
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_create().returning(|_x| {
-            Err(PersistenceError("unable to create exercise".to_string()))
-        });
+        mock_repo
+            .expect_create()
+            .returning(|_x| Err(PersistenceError("unable to create exercise".to_string())));
         let mgr_result = ExerciseManager::new(Box::new(mock_repo));
 
         let mut mgr = mgr_result.unwrap();
@@ -177,16 +167,17 @@ mod tests {
     #[test]
     fn get_exercise_by_name_ok() {
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_query_by_name()
+        mock_repo
+            .expect_query_by_name()
             .with(eq("Deadlift".to_string()))
             .returning(|_string| {
-            Ok(Some(Exercise{
-                id: Some(1),
-                name: "Deadlift".to_string(),
-                description: None,
-                exercise_type: Barbell,
-            }))
-        });
+                Ok(Some(Exercise {
+                    id: Some(1),
+                    name: "Deadlift".to_string(),
+                    description: None,
+                    exercise_type: Barbell,
+                }))
+            });
 
         let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
 
@@ -202,11 +193,10 @@ mod tests {
     #[test]
     fn get_exercise_by_name_not_found() {
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_query_by_name()
+        mock_repo
+            .expect_query_by_name()
             .with(eq("Deadlift".to_string()))
-            .returning(|_string| {
-                Ok(None)
-            });
+            .returning(|_string| Ok(None));
 
         let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
 
@@ -221,11 +211,10 @@ mod tests {
     #[test]
     fn get_exercise_by_name_query_error() {
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_query_by_name()
+        mock_repo
+            .expect_query_by_name()
             .with(eq("Deadlift".to_string()))
-            .returning(|_string| {
-                Err(PersistenceError("error".to_string()))
-            });
+            .returning(|_string| Err(PersistenceError("error".to_string())));
 
         let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
 
@@ -240,10 +229,11 @@ mod tests {
     #[test]
     fn get_exercise_by_id_ok() {
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_query_by_id()
+        mock_repo
+            .expect_query_by_id()
             .with(eq(1))
             .returning(|_string| {
-                Ok(Some(Exercise{
+                Ok(Some(Exercise {
                     id: Some(1),
                     name: "Deadlift".to_string(),
                     description: None,
@@ -264,11 +254,10 @@ mod tests {
     #[test]
     fn get_exercise_by_id_not_found() {
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_query_by_id()
+        mock_repo
+            .expect_query_by_id()
             .with(eq(1))
-            .returning(|_string| {
-                Ok(None)
-            });
+            .returning(|_string| Ok(None));
 
         let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
 
@@ -283,11 +272,10 @@ mod tests {
     #[test]
     fn get_exercise_by_id_query_error() {
         let mut mock_repo = MockRepository::<Exercise>::new();
-        mock_repo.expect_query_by_id()
+        mock_repo
+            .expect_query_by_id()
             .with(eq(1))
-            .returning(|_string| {
-                Err(PersistenceError("error".to_string()))
-            });
+            .returning(|_string| Err(PersistenceError("error".to_string())));
 
         let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
 
@@ -299,22 +287,24 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn list_exercises_ok() {
         let mut mock_repo = MockRepository::<Exercise>::new();
         mock_repo.expect_list().returning(|| {
-            let result = vec![Exercise{
-                id: Some(1),
-                name: "Deadlift".to_string(),
-                description: None,
-                exercise_type: ExerciseType::Barbell,
-            }, Exercise{
-                id: Some(2),
-                name: "BenchPress".to_string(),
-                description: None,
-                exercise_type: ExerciseType::Barbell,
-            }];
+            let result = vec![
+                Exercise {
+                    id: Some(1),
+                    name: "Deadlift".to_string(),
+                    description: None,
+                    exercise_type: ExerciseType::Barbell,
+                },
+                Exercise {
+                    id: Some(2),
+                    name: "BenchPress".to_string(),
+                    description: None,
+                    exercise_type: ExerciseType::Barbell,
+                },
+            ];
 
             Ok(result)
         });
