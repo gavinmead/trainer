@@ -9,3 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+mockall = "0.13.1"
