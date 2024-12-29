@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod tests {
     use api::ExerciseType::{Barbell, KettleBell};
-    use api::TrainerError::ExerciseNotFound;
+    use api::TrainerError::{ExerciseIdNotProvidedError, ExerciseNotFound};
     use api::{Exercise, ExerciseManagement, ExerciseManager};
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
@@ -122,5 +122,27 @@ pub mod tests {
                 Some(i) if i > 0
             ));
         }
+    }
+
+    #[rstest]
+    fn delete_ok(test_config: (ExerciseManager, TempDir), mut deadlift: Exercise) {
+        let mgr = test_config.0;
+        let result = mgr.create(&mut deadlift);
+        assert!(result.is_ok());
+
+        let delete_result = mgr.delete(deadlift);
+        assert!(delete_result.is_ok());
+    }
+
+    #[rstest]
+    fn delete_no_id(test_config: (ExerciseManager, TempDir), deadlift: Exercise) {
+        let mgr = test_config.0;
+
+        let delete_result = mgr.delete(deadlift);
+        assert!(delete_result.is_err());
+        assert!(matches!(
+            delete_result.unwrap_err(),
+            ExerciseIdNotProvidedError(s) if s == "id was not provided"
+        ))
     }
 }
