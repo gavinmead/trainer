@@ -341,4 +341,10 @@ mod tests {
         let exercises = exercises_result.unwrap();
         assert_eq!(2, exercises.len());
     }
+
+    #[test]
+    #[should_panic]
+    fn test_bad_i64_for_exercise_type() {
+        ExerciseType::from(1000);
+    }
 }
