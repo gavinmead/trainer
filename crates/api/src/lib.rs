@@ -27,6 +27,19 @@ impl From<i64> for ExerciseType {
     }
 }
 
+impl From<String> for ExerciseType {
+    fn from(value: String) -> Self {
+        let lower = value.to_lowercase();
+        match lower.as_str() {
+            "barbell" => ExerciseType::Barbell,
+            "bb" => ExerciseType::Barbell,
+            "kettlebell" => ExerciseType::KettleBell,
+            "kb" => ExerciseType::KettleBell,
+            _ => panic!("unsupported value"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)] //this is temporary until code base evolves
 pub struct Exercise {
@@ -153,7 +166,7 @@ pub type ExerciseRepository = dyn Repository<Exercise>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExerciseType::Barbell;
+    use crate::ExerciseType::{Barbell, KettleBell};
     use crate::TrainerError::{ExerciseNotFound, PersistenceError};
 
     #[test]
@@ -406,5 +419,40 @@ mod tests {
             result.err().unwrap(),
             ExerciseIdNotProvidedError(s) if s == "id was not provided"
         ));
+    }
+
+    #[test]
+    fn from_string_to_exercise_type_ok() {
+        let bbs = vec![
+            "Barbell".to_string(),
+            "BARBELL".to_string(),
+            "bArBeLl".to_string(),
+            "bb".to_string(),
+            "BB".to_string(),
+            "bB".to_string(),
+        ];
+        let kbs = vec![
+            "Kettlebell".to_string(),
+            "KETTLEBELL".to_string(),
+            "kEtTlEbElL".to_string(),
+            "kb".to_string(),
+            "KB".to_string(),
+            "kB".to_string()];
+
+        for bb in bbs {
+            let et: ExerciseType = bb.into();
+            assert_eq!(et, Barbell)
+        }
+
+        for kb in kbs {
+            let et: ExerciseType = kb.into();
+            assert_eq!(et, KettleBell)
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_string_to_exercise_type_fail() {
+        let _: ExerciseType = "not_found".to_string().into();
     }
 }
