@@ -1,4 +1,3 @@
-use crate::TrainerError::ExerciseNotFound;
 #[cfg(test)]
 use mockall::{automock, predicate::*};
 
@@ -6,6 +5,25 @@ use mockall::{automock, predicate::*};
 pub enum ExerciseType {
     Barbell,
     KettleBell,
+}
+
+impl From<ExerciseType> for i64 {
+    fn from(value: ExerciseType) -> Self {
+        match value {
+            ExerciseType::Barbell => 0,
+            ExerciseType::KettleBell => 1,
+        }
+    }
+}
+
+impl From<i64> for ExerciseType {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => ExerciseType::Barbell,
+            1 => ExerciseType::KettleBell,
+            _ => panic!("unsupported value"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,7 +79,7 @@ impl ExerciseManager {
     ) -> TrainerResult<Exercise> {
         match result {
             Ok(r) => match r {
-                None => Err(ExerciseNotFound(error_message)),
+                None => Err(TrainerError::ExerciseNotFound(error_message)),
                 Some(e) => Ok(e),
             },
             Err(e) => Err(e),
@@ -116,7 +134,7 @@ pub type ExerciseRepository = dyn Repository<Exercise>;
 mod tests {
     use super::*;
     use crate::ExerciseType::Barbell;
-    use crate::TrainerError::PersistenceError;
+    use crate::TrainerError::{ExerciseNotFound, PersistenceError};
 
     #[test]
     fn create_exercise_manager() {
