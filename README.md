@@ -62,15 +62,16 @@ The Step Loader will modify the training plan to introduce a weight increment ac
 * Update Set 1 to use this new weight after 2-4 weeks after Set 5
 * Stay at this weight for at least 4 weeks
 
-Note that step-loading should not be a frequent occurrence over the course of a year.
+Note that step-loading is an infrequent occurrence over the course of a year.
 
 ### Structure
 
 This application is a collection of components including:
 * a core api library
-* a protobuf spec that wraps the core api
-* a tonic based client/server setup
-* a sqlite based backend that is replicated via litestream
+* an axum based REST Server that wraps the core API (hexagonal architecture)
+* a hyper based REST Client
+* a sqlite based backend that is replicated via litestream to S3
 * a slint based front end for a low cost touchscreen that can be used in the training space
 * a slint based MacOS Application for defining training plans and viewing results
+* CDK setup for an AWS API Gateway, Lambda with axum and other stuff to host the api.  Uses mTLS
  
