@@ -1,4 +1,3 @@
-use crate::TrainerError::ExerciseNotFound;
 #[cfg(test)]
 use mockall::{automock, predicate::*};
 
@@ -8,13 +7,32 @@ pub enum ExerciseType {
     KettleBell,
 }
 
-#[derive(Clone, Debug)]
+impl From<ExerciseType> for i64 {
+    fn from(value: ExerciseType) -> Self {
+        match value {
+            ExerciseType::Barbell => 0,
+            ExerciseType::KettleBell => 1,
+        }
+    }
+}
+
+impl From<i64> for ExerciseType {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => ExerciseType::Barbell,
+            1 => ExerciseType::KettleBell,
+            _ => panic!("unsupported value"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 #[allow(dead_code)] //this is temporary until code base evolves
 pub struct Exercise {
-    id: Option<i64>,
-    name: String,
-    description: Option<String>,
-    exercise_type: ExerciseType,
+    pub id: Option<i64>,
+    pub name: String,
+    pub description: Option<String>,
+    pub exercise_type: ExerciseType,
 }
 
 pub type TrainerResult<T> = Result<T, TrainerError>;
@@ -26,6 +44,12 @@ pub enum TrainerError {
 
     #[error("PersistenceError: {0}")]
     PersistenceError(String),
+
+    #[error("ConnectionError: {0}")]
+    ConnectionError(String),
+
+    #[error("QueryError: {0}")]
+    QueryError(String),
 }
 
 pub trait ExerciseManagement {
@@ -55,7 +79,7 @@ impl ExerciseManager {
     ) -> TrainerResult<Exercise> {
         match result {
             Ok(r) => match r {
-                None => Err(ExerciseNotFound(error_message)),
+                None => Err(TrainerError::ExerciseNotFound(error_message)),
                 Some(e) => Ok(e),
             },
             Err(e) => Err(e),
@@ -110,7 +134,7 @@ pub type ExerciseRepository = dyn Repository<Exercise>;
 mod tests {
     use super::*;
     use crate::ExerciseType::Barbell;
-    use crate::TrainerError::PersistenceError;
+    use crate::TrainerError::{ExerciseNotFound, PersistenceError};
 
     #[test]
     fn create_exercise_manager() {
@@ -316,5 +340,11 @@ mod tests {
 
         let exercises = exercises_result.unwrap();
         assert_eq!(2, exercises.len());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_bad_i64_for_exercise_type() {
+        ExerciseType::from(1000);
     }
 }
