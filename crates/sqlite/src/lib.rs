@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS EXERCISE (
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     description TEXT,
-    exercise_type INTEGER NOT NULL
+    exercise_type INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
 )
 ";
 
@@ -17,17 +18,21 @@ INSERT INTO EXERCISE (name, description, exercise_type) VALUES (?1, ?2, ?3)
 
 const SELECT_BY_NAME: &str = "\
 SELECT id, name, description, exercise_type
-FROM EXERCISE WHERE name = :name COLLATE NOCASE
+FROM EXERCISE WHERE deleted = 0 AND name = :name COLLATE NOCASE
 ";
 
 const SELECT_BY_ID: &str = "\
 SELECT id, name, description, exercise_type
-FROM EXERCISE WHERE id = :id
+FROM EXERCISE WHERE id = :id AND deleted = 0
 ";
 
 const SELECT_ALL: &str = "\
     SELECT id, name, description, exercise_type
-    FROM EXERCISE
+    FROM EXERCISE WHERE deleted = 0
+";
+
+const SOFT_DELETE: &str = "\
+UPDATE EXERCISE SET deleted = 1 WHERE id = :id
 ";
 
 pub enum DBType<'a> {
@@ -138,6 +143,14 @@ impl Repository<Exercise> for SqliteExerciseRepository {
                 Ok(v)
             }
             Err(e) => Err(QueryError(e.to_string())),
+        }
+    }
+
+    fn delete(&self, t: Exercise) -> TrainerResult<()> {
+        let result = self.conn.execute(SOFT_DELETE, params![t.id.unwrap()]);
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(DeleteError(e.to_string())),
         }
     }
 }
@@ -357,5 +370,41 @@ mod tests {
                     Some(i) if i > 0
             ));
         }
+    }
+
+    #[rstest]
+    fn delete_ok(test_config: TestConfig, deadlift: Exercise) {
+        let repo = test_config.repo;
+        let id = repo.create(&deadlift).unwrap();
+
+        let mut to_delete = deadlift.clone();
+        to_delete.id = Some(id);
+        let result = repo.delete(to_delete);
+        assert!(result.is_ok());
+
+        //Test that the search returns nothing
+        let search_result = repo.query_by_id(id);
+        assert!(search_result.is_ok());
+        assert_eq!(search_result.unwrap(), None);
+    }
+
+    #[rstest]
+    fn multi_delete_ok(test_config: TestConfig, deadlift: Exercise) {
+        let repo = test_config.repo;
+        let id = repo.create(&deadlift).unwrap();
+
+        let mut to_delete = deadlift.clone();
+        to_delete.id = Some(id);
+        let result = repo.delete(to_delete);
+        assert!(result.is_ok());
+
+        //Test that the search returns nothing
+        let search_result = repo.query_by_id(id);
+        assert!(search_result.is_ok());
+        assert_eq!(search_result.unwrap(), None);
+
+        let search_result = repo.query_by_id(id);
+        assert!(search_result.is_ok());
+        assert_eq!(search_result.unwrap(), None);
     }
 }

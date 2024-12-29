@@ -1,3 +1,4 @@
+use crate::TrainerError::ExerciseIdNotProvidedError;
 #[cfg(test)]
 use mockall::{automock, predicate::*};
 
@@ -50,6 +51,12 @@ pub enum TrainerError {
 
     #[error("QueryError: {0}")]
     QueryError(String),
+
+    #[error("DeleteError: {0}")]
+    DeleteError(String),
+
+    #[error("ExerciseIdNotProvidedError: {0}")]
+    ExerciseIdNotProvidedError(String),
 }
 
 pub trait ExerciseManagement {
@@ -60,6 +67,8 @@ pub trait ExerciseManagement {
     fn get_by_id(&self, id: i64) -> TrainerResult<Exercise>;
 
     fn list(&self) -> TrainerResult<Vec<Exercise>>;
+
+    fn delete(&self, exercise: Exercise) -> TrainerResult<()>;
 }
 
 pub struct ExerciseManager {
@@ -112,6 +121,15 @@ impl ExerciseManagement for ExerciseManager {
     fn list(&self) -> TrainerResult<Vec<Exercise>> {
         self.repository.list()
     }
+
+    fn delete(&self, exercise: Exercise) -> TrainerResult<()> {
+        match exercise.id {
+            None => Err(ExerciseIdNotProvidedError(
+                "id was not provided".to_string(),
+            )),
+            Some(_) => self.repository.delete(exercise),
+        }
+    }
 }
 
 #[cfg_attr(test, automock)]
@@ -126,6 +144,8 @@ pub trait Repository<T> {
     fn query_by_id(&self, id: i64) -> TrainerResult<Option<T>>;
 
     fn list(&self) -> TrainerResult<Vec<T>>;
+
+    fn delete(&self, t: T) -> TrainerResult<()>;
 }
 
 pub type ExerciseRepository = dyn Repository<Exercise>;
@@ -346,5 +366,45 @@ mod tests {
     #[should_panic]
     fn test_bad_i64_for_exercise_type() {
         let _ = ExerciseType::from(1000);
+    }
+
+    #[test]
+    fn test_delete_ok() {
+        let exercise = Exercise {
+            id: Some(1),
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+
+        let mut mock_repo = MockRepository::<Exercise>::new();
+        mock_repo
+            .expect_delete()
+            .with(eq(exercise.clone()))
+            .returning(|_| Ok(()));
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+
+        let result = mgr.delete(exercise);
+        assert!(result.is_ok())
+    }
+
+    #[test]
+    fn test_delete_no_id() {
+        let exercise = Exercise {
+            id: None,
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+        let mut mock_repo = MockRepository::<Exercise>::new();
+        mock_repo.expect_delete().times(0);
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+
+        let result = mgr.delete(exercise);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            ExerciseIdNotProvidedError(s) if s == "id was not provided"
+        ));
     }
 }
