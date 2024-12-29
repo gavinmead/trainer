@@ -1,0 +1,18 @@
+[package]
+name = "trainer-tests"
+version = "0.1.0"
+authors.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+api = {path = "../api"}
+sqlite = {path = "../sqlite"}
+
+[dev-dependencies]
+tempfile = "3.14.0"
+rand = "0.8.5"
+rstest = { workspace = true }

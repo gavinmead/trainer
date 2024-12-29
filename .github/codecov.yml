@@ -21,6 +21,7 @@ coverage:
     - "benches/*"
     - "**/*.toml"
     - "**/*.md"
+    - "crates/trainer-tests/*"
 
 comment:
   layout: "reach, diff, flags, files"

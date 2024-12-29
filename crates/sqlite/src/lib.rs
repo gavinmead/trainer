@@ -343,8 +343,8 @@ mod tests {
     #[rstest]
     fn list_ok(test_config: TestConfig, deadlift: Exercise, benchpress: Exercise) {
         let repo = test_config.repo;
-        repo.create(&deadlift);
-        repo.create(&benchpress);
+        let _ = repo.create(&deadlift);
+        let _ = repo.create(&benchpress);
 
         let list_result = repo.list();
         assert!(list_result.is_ok());

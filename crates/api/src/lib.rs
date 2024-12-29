@@ -345,6 +345,6 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_bad_i64_for_exercise_type() {
-        ExerciseType::from(1000);
+        let _ = ExerciseType::from(1000);
     }
 }
