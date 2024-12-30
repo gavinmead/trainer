@@ -35,6 +35,11 @@ const SOFT_DELETE: &str = "\
 UPDATE EXERCISE SET deleted = 1 WHERE id = :id
 ";
 
+const UPDATE: &str = "\
+UPDATE EXERCISE set name = :name, description = :description,
+exercise_type = :exercise_type WHERE id = :id
+";
+
 pub enum DBType<'a> {
     InMemory,
     File(&'a Path),
@@ -115,6 +120,20 @@ impl Repository<Exercise> for SqliteExerciseRepository {
                 let id = self.conn.last_insert_rowid();
                 Ok(id)
             }
+            Err(e) => Err(PersistenceError(e.to_string())),
+        }
+    }
+
+    fn update(&self, t: Exercise) -> TrainerResult<()> {
+        let mut stmt = self.conn.prepare(UPDATE).unwrap();
+        let result = stmt.execute(params![
+            &t.name,
+            &t.description.unwrap_or_default(),
+            &<api::ExerciseType as Into<i64>>::into(t.exercise_type),
+            &t.id.unwrap()
+        ]);
+        match result {
+            Ok(_) => Ok(()),
             Err(e) => Err(PersistenceError(e.to_string())),
         }
     }
@@ -406,5 +425,44 @@ mod tests {
         let search_result = repo.query_by_id(id);
         assert!(search_result.is_ok());
         assert_eq!(search_result.unwrap(), None);
+    }
+
+    #[rstest]
+    fn update_ok(test_config: TestConfig, mut deadlift: Exercise) {
+        let repo = test_config.repo;
+        let id = repo.create(&deadlift).unwrap();
+
+        deadlift.id = Some(id.clone());
+        //Make some changes
+        deadlift.description = Some("an update".to_string());
+        deadlift.name = "DEADLIFT".to_string();
+
+        let update_result = repo.update(deadlift.clone());
+        assert!(update_result.is_ok());
+
+        let found_exercise = repo.query_by_id(id).unwrap().unwrap();
+        assert!(matches!(
+            found_exercise.description,
+            Some(s) if s == "an update".to_string()
+        ));
+        assert_eq!(found_exercise.name, "DEADLIFT".to_string())
+    }
+
+    #[rstest]
+    fn update_with_no_description(test_config: TestConfig, mut deadlift: Exercise) {
+        let repo = test_config.repo;
+        let id = repo.create(&deadlift).unwrap();
+
+        deadlift.id = Some(id.clone());
+        //Make some changes
+        deadlift.description = None;
+        deadlift.name = "DEADLIFT".to_string();
+
+        let update_result = repo.update(deadlift.clone());
+        assert!(update_result.is_ok());
+
+        let found_exercise = repo.query_by_id(id).unwrap().unwrap();
+        assert!(matches!(found_exercise.description, None));
+        assert_eq!(found_exercise.name, "DEADLIFT".to_string())
     }
 }
