@@ -2,7 +2,8 @@ use crate::TrainerError::ExerciseIdNotProvidedError;
 #[cfg(test)]
 use mockall::{automock, predicate::*};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
+#[non_exhaustive]
 pub enum ExerciseType {
     Barbell,
     KettleBell,
@@ -75,6 +76,9 @@ pub enum TrainerError {
 pub trait ExerciseManagement {
     fn create(&self, exercise: &mut Exercise) -> TrainerResult<()>;
 
+    // Will create or update an exercise
+    fn save(&self, exercise: &mut Exercise) -> TrainerResult<()>;
+
     fn get_by_name(&self, name: String) -> TrainerResult<Exercise>;
 
     fn get_by_id(&self, id: i64) -> TrainerResult<Exercise>;
@@ -121,6 +125,34 @@ impl ExerciseManagement for ExerciseManager {
         }
     }
 
+    fn save(&self, exercise: &mut Exercise) -> TrainerResult<()> {
+        //See if the exercise already exists search by id
+        let mut found_result = false;
+
+        match exercise.id {
+            None => {}
+            Some(id) => {
+                found_result = match self.get_by_id(id) {
+                    Ok(_) => true,
+                    Err(e) => match e {
+                        TrainerError::ExerciseNotFound(_) => return Err(e),
+                        _ => return Err(e),
+                    },
+                }
+            }
+        }
+
+        if found_result {
+            //Do an update
+            match self.repository.update(exercise) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            }
+        } else {
+            self.create(exercise)
+        }
+    }
+
     fn get_by_name(&self, name: String) -> TrainerResult<Exercise> {
         let result = self.repository.query_by_name(name.clone());
         Self::process_query_result(result, name)
@@ -152,7 +184,7 @@ pub trait Repository<T> {
     /// TrainerError will be a PersistenceError
     fn create(&self, t: &T) -> TrainerResult<i64>;
 
-    fn update(&self, t: T) -> TrainerResult<()>;
+    fn update(&self, t: &T) -> TrainerResult<()>;
 
     fn query_by_name(&self, name: String) -> TrainerResult<Option<T>>;
 
@@ -170,6 +202,7 @@ mod tests {
     use super::*;
     use crate::ExerciseType::{Barbell, KettleBell};
     use crate::TrainerError::{ExerciseNotFound, PersistenceError};
+    use mockall::Sequence;
 
     #[test]
     fn create_exercise_manager() {
@@ -457,5 +490,162 @@ mod tests {
     #[should_panic]
     fn from_string_to_exercise_type_fail() {
         let _: ExerciseType = "not_found".to_string().into();
+    }
+
+    #[test]
+    fn save_brand_new() {
+        let mut exercise = Exercise {
+            id: None,
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+
+        let mut seq = Sequence::new();
+        let mut mock_repo = MockRepository::<Exercise>::new();
+
+        mock_repo
+            .expect_create()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_x| Ok(1));
+
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+        let result = mgr.save(&mut exercise);
+        assert!(result.is_ok())
+    }
+
+    #[test]
+    fn save_branch_new_search_id_error() {
+        let mut exercise = Exercise {
+            id: Some(1000),
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+
+        let mut seq = Sequence::new();
+        let mut mock_repo = MockRepository::<Exercise>::new();
+        mock_repo
+            .expect_query_by_id()
+            .with(eq(1000))
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_string| Err(PersistenceError("fail".to_string())));
+
+        mock_repo
+            .expect_create()
+            .times(0)
+            .in_sequence(&mut seq)
+            .returning(|_x| Ok(1));
+
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+        let result = mgr.save(&mut exercise);
+        assert!(result.is_err())
+    }
+
+    #[test]
+    fn save_with_bad_id() {
+        let mut exercise = Exercise {
+            id: Some(1000),
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+
+        let mut seq = Sequence::new();
+        let mut mock_repo = MockRepository::<Exercise>::new();
+
+        mock_repo
+            .expect_query_by_id()
+            .with(eq(1000))
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_string| Ok(None));
+
+        mock_repo
+            .expect_create()
+            .times(0)
+            .in_sequence(&mut seq)
+            .returning(|_x| Ok(1));
+
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+        let result = mgr.save(&mut exercise);
+        assert!(result.is_err());
+        assert!(matches!(result.err().unwrap(), ExerciseNotFound(_)))
+    }
+
+    #[test]
+    fn save_with_good_id() {
+        let mut exercise = Exercise {
+            id: Some(1000),
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+
+        let mut seq = Sequence::new();
+        let mut mock_repo = MockRepository::<Exercise>::new();
+
+        mock_repo
+            .expect_query_by_id()
+            .with(eq(1000))
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_string| {
+                Ok(Some(Exercise {
+                    id: Some(1000),
+                    name: "Deadlift".to_string(),
+                    description: None,
+                    exercise_type: Barbell,
+                }))
+            });
+
+        mock_repo
+            .expect_update()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_x| Ok(()));
+
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+        let result = mgr.save(&mut exercise);
+        assert!(result.is_ok())
+    }
+
+    #[test]
+    fn save_an_update_failed() {
+        let mut exercise = Exercise {
+            id: Some(1000),
+            name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        };
+
+        let mut seq = Sequence::new();
+        let mut mock_repo = MockRepository::<Exercise>::new();
+
+        mock_repo
+            .expect_query_by_id()
+            .with(eq(1000))
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_string| {
+                Ok(Some(Exercise {
+                    id: Some(1000),
+                    name: "Deadlift".to_string(),
+                    description: None,
+                    exercise_type: Barbell,
+                }))
+            });
+
+        mock_repo
+            .expect_update()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|_x| Err(PersistenceError("failed".to_string())));
+
+        let mgr = ExerciseManager::new(Box::new(mock_repo)).unwrap();
+        let result = mgr.save(&mut exercise);
+        assert!(result.is_err())
     }
 }
