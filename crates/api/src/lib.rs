@@ -150,7 +150,9 @@ pub trait Repository<T> {
     /// Persists T.
     /// Will return the repository generated ID in a TrainerResult.
     /// TrainerError will be a PersistenceError
-    fn create(&self, exercise: &T) -> TrainerResult<i64>;
+    fn create(&self, t: &T) -> TrainerResult<i64>;
+
+    fn update(&self, t: T) -> TrainerResult<()>;
 
     fn query_by_name(&self, name: String) -> TrainerResult<Option<T>>;
 
