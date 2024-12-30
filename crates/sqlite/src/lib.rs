@@ -111,7 +111,7 @@ impl Repository<Exercise> for SqliteExerciseRepository {
             None => "",
             Some(x) => x,
         };
-        let e_type: i64 = exercise.exercise_type.clone().into();
+        let e_type: i64 = exercise.exercise_type.into();
         match self
             .conn
             .execute(INSERT, params![exercise.name, description, e_type])
@@ -124,13 +124,13 @@ impl Repository<Exercise> for SqliteExerciseRepository {
         }
     }
 
-    fn update(&self, t: Exercise) -> TrainerResult<()> {
+    fn update(&self, t: &Exercise) -> TrainerResult<()> {
         let mut stmt = self.conn.prepare(UPDATE).unwrap();
         let result = stmt.execute(params![
-            &t.name,
-            &t.description.unwrap_or_default(),
-            &<api::ExerciseType as Into<i64>>::into(t.exercise_type),
-            &t.id.unwrap()
+            t.name,
+            t.description.clone().unwrap_or_default(),
+            <api::ExerciseType as Into<i64>>::into(t.exercise_type),
+            t.id.unwrap()
         ]);
         match result {
             Ok(_) => Ok(()),
@@ -437,7 +437,7 @@ mod tests {
         deadlift.description = Some("an update".to_string());
         deadlift.name = "DEADLIFT".to_string();
 
-        let update_result = repo.update(deadlift.clone());
+        let update_result = repo.update(&deadlift);
         assert!(update_result.is_ok());
 
         let found_exercise = repo.query_by_id(id).unwrap().unwrap();
@@ -458,7 +458,7 @@ mod tests {
         deadlift.description = None;
         deadlift.name = "DEADLIFT".to_string();
 
-        let update_result = repo.update(deadlift.clone());
+        let update_result = repo.update(&deadlift);
         assert!(update_result.is_ok());
 
         let found_exercise = repo.query_by_id(id).unwrap().unwrap();

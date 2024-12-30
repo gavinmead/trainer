@@ -74,3 +74,5 @@ deps:
 cov:
 	cargo tarpaulin --engine llvm --out Html
 	open tarpaulin-report.html
+
+pre-commit: fmt fmt-check lint test
