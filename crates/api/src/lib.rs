@@ -437,7 +437,8 @@ mod tests {
             "kEtTlEbElL".to_string(),
             "kb".to_string(),
             "KB".to_string(),
-            "kB".to_string()];
+            "kB".to_string(),
+        ];
 
         for bb in bbs {
             let et: ExerciseType = bb.into();
