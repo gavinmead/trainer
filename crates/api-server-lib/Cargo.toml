@@ -1,0 +1,19 @@
+[package]
+name = "api-server-lib"
+version = "0.1.0"
+authors.workspace = true
+rust-version.workspace = true
+readme.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+api = {path = "../api"}
+sqlite = {path = "../sqlite"}
+axum = "0.7"
+tokio = "1.42.0"
+tower = "0.5.2"
+http-body-util = "0.1.2"
+hyper-util = { version = "0.1.10", features = ["client", "client-legacy"] }
+
