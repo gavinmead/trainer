@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS EXERCISE (
+    id INTEGER PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    exercise_type INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+);
