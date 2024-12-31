@@ -4,13 +4,13 @@ use serde_derive::Deserialize;
 #[derive(Debug, Deserialize)]
 #[allow(unused)]
 pub struct Settings {
-    db_name: String,
-    db_path: String,
+    pub db_name: String,
+    pub db_path: String,
 }
 
 impl Settings {
     #[allow(dead_code)]
-    fn new() -> Result<Self, ConfigError> {
+    pub(crate) fn new() -> Result<Self, ConfigError> {
         let s = Config::builder()
             .add_source(Environment::with_prefix("TRAINER"))
             .build()?;
