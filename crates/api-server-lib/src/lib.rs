@@ -1,24 +1,43 @@
+mod settings;
+
+use api::ExerciseManager;
 use axum::routing::get;
 use axum::Router;
+use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateExerciseRequest {
     name: String,
     description: Option<String>,
     exercise_type: String,
 }
 
-#[allow(dead_code)]
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateExerciseResponse {
     id: i64,
 }
 
-#[allow(dead_code)]
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct GetExerciseResponse {
     id: i64,
     name: String,
     description: Option<String>,
     exercise_type: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorMessage {
+    error_code: String,
+    description: String,
+}
+
+#[allow(dead_code)]
+struct AppState {
+    mgr: ExerciseManager,
 }
 
 #[allow(dead_code)]
