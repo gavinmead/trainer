@@ -1,3 +1,5 @@
+mod sqlx_impl;
+
 use api::{Exercise, ExerciseType, Repository, TrainerError::*, TrainerResult};
 use rusqlite::{params, Connection, Error, Row};
 use std::path::Path;
