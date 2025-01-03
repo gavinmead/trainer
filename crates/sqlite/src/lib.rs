@@ -1,177 +1,160 @@
-mod sqlx_impl;
-
-use api::{Exercise, ExerciseType, Repository, TrainerError::*, TrainerResult};
-use rusqlite::{params, Connection, Error, Row};
+use api::exercise::Exercise;
+use api::TrainerError::{ConnectionError, ExerciseNotFound, PersistenceError, QueryError};
+use api::TrainerResult;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
+use sqlx::{migrate, Acquire, Error, Row, SqlitePool};
 use std::path::Path;
-
-const CREATE_TABLE: &str = "\
-CREATE TABLE IF NOT EXISTS EXERCISE (
-    id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
-    description TEXT,
-    exercise_type INTEGER NOT NULL,
-    deleted INTEGER NOT NULL DEFAULT 0
-)
-";
-
-const INSERT: &str = "\
-INSERT INTO EXERCISE (name, description, exercise_type) VALUES (?1, ?2, ?3)
-";
-
-const SELECT_BY_NAME: &str = "\
-SELECT id, name, description, exercise_type
-FROM EXERCISE WHERE deleted = 0 AND name = :name COLLATE NOCASE
-";
-
-const SELECT_BY_ID: &str = "\
-SELECT id, name, description, exercise_type
-FROM EXERCISE WHERE id = :id AND deleted = 0
-";
-
-const SELECT_ALL: &str = "\
-    SELECT id, name, description, exercise_type
-    FROM EXERCISE WHERE deleted = 0
-";
-
-const SOFT_DELETE: &str = "\
-UPDATE EXERCISE SET deleted = 1 WHERE id = :id
-";
-
-const UPDATE: &str = "\
-UPDATE EXERCISE set name = :name, description = :description,
-exercise_type = :exercise_type WHERE id = :id
-";
+use std::str::FromStr;
 
 pub enum DBType<'a> {
     InMemory,
     File(&'a Path),
 }
 
+#[allow(unused)]
 pub struct SqliteExerciseRepository {
-    conn: Connection,
+    pool: SqlitePool,
 }
 
 impl SqliteExerciseRepository {
-    fn process_connection(conn_result: Result<Connection, Error>) -> TrainerResult<Connection> {
-        match conn_result {
-            Ok(c) => Ok(c),
+    #[allow(dead_code)]
+    pub async fn new(dbtype: DBType<'_>) -> TrainerResult<Self> {
+        let pool_result: Result<SqlitePool, Error> = match dbtype {
+            DBType::InMemory => SqlitePool::connect("sqlite::memory:").await,
+            DBType::File(f) => {
+                let opts = SqliteConnectOptions::from_str(
+                    format!("sqlite://{}", f.to_str().unwrap()).as_str(),
+                )
+                .unwrap()
+                .create_if_missing(true)
+                .foreign_keys(true);
+
+                SqlitePool::connect_with(opts).await
+            }
+        };
+
+        match pool_result {
+            Ok(p) => {
+                let migrate_result = migrate!("db/migrations/exercises").run(&p).await;
+
+                match migrate_result {
+                    Ok(_) => Ok(Self { pool: p }),
+                    Err(e) => Err(ConnectionError(e.to_string())),
+                }
+            }
             Err(e) => Err(ConnectionError(e.to_string())),
         }
     }
 
-    pub fn new(db_type: DBType) -> TrainerResult<Self> {
-        let conn: TrainerResult<Connection> = match db_type {
-            DBType::InMemory => Self::process_connection(Connection::open_in_memory()),
-            DBType::File(p) => Self::process_connection(Connection::open(p)),
-        };
+    #[allow(dead_code)]
+    pub async fn create(&self, t: &Exercise) -> TrainerResult<i64> {
+        let mut conn = self.pool.acquire().await.unwrap();
+        let query_result = sqlx::query(
+            r#"
+                INSERT INTO EXERCISE (name, description, exercise_type) VALUES (?1, ?2, ?3)
+                "#,
+        )
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind::<i64>(t.exercise_type.into())
+        .execute(&mut *conn)
+        .await;
 
-        match conn {
-            Ok(c) => {
-                //Create the table
-                match c.execute(CREATE_TABLE, ()) {
-                    Ok(_) => Ok(SqliteExerciseRepository { conn: c }),
-                    Err(e) => Err(PersistenceError(e.to_string())),
+        match query_result {
+            Ok(r) => Ok(r.last_insert_rowid()),
+            Err(e) => Err(PersistenceError(e.to_string())),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub async fn query_by_id(&self, id: i64) -> TrainerResult<Option<Exercise>> {
+        let mut conn = self.pool.acquire().await.unwrap();
+        let query_result = sqlx::query(
+            r#"
+                SELECT id, name, description, exercise_type
+                FROM EXERCISE WHERE id = ?1 AND deleted = 0
+                "#,
+        )
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await;
+
+        self.process_query(query_result)
+    }
+
+    #[allow(dead_code)]
+    pub async fn query_by_name(&self, name: String) -> TrainerResult<Option<Exercise>> {
+        let mut conn = self.pool.acquire().await.unwrap();
+        let query_result = sqlx::query(
+            r#"
+                SELECT id, name, description, exercise_type
+                FROM EXERCISE WHERE deleted = 0 AND
+                name = ?1 COLLATE NOCASE
+                "#,
+        )
+        .bind(name)
+        .fetch_one(&mut *conn)
+        .await;
+
+        self.process_query(query_result)
+    }
+
+    #[allow(dead_code)]
+    pub async fn update(&self, t: &Exercise) -> TrainerResult<()> {
+        let mut conn = self.pool.acquire().await.unwrap();
+        let mut tx = conn.begin().await.unwrap();
+        let update_result = sqlx::query(
+            r#"
+                UPDATE EXERCISE set name = ?1, description = ?2,
+                exercise_type = ?3 WHERE id = ?4
+                "#,
+        )
+        .bind(&t.name)
+        .bind(&t.description)
+        .bind::<i64>(t.exercise_type.into())
+        .bind(t.id)
+        .execute(&mut *tx)
+        .await;
+
+        match update_result {
+            Ok(r) => {
+                if r.rows_affected() == 1 {
+                    let commit_result = tx.commit().await;
+                    match commit_result {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(PersistenceError(e.to_string())),
+                    }
+                } else {
+                    let rollback_result = tx.rollback().await;
+                    match rollback_result {
+                        Ok(_) => Err(ExerciseNotFound(format!(
+                            "exercise {} was not found",
+                            t.name.clone()
+                        ))),
+                        Err(e) => Err(PersistenceError(e.to_string())),
+                    }
                 }
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    fn map_exercise(row: &Row) -> Result<Option<Exercise>, Error> {
-        let id: i64 = row.get(0).unwrap();
-        let name = row.get(1).unwrap();
-        let description: String = row.get(2).unwrap();
-        let et: i64 = row.get(3).unwrap();
-
-        let mut final_description = None;
-        if !description.is_empty() {
-            final_description = Some(description);
-        }
-
-        let exercise_type: ExerciseType = et.into();
-
-        Ok(Some(Exercise {
-            id: Some(id),
-            name,
-            description: final_description,
-            exercise_type,
-        }))
-    }
-
-    fn handle_row(result: Result<Option<Exercise>, Error>) -> TrainerResult<Option<Exercise>> {
-        match result {
-            Ok(r) => Ok(r),
-            Err(Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(QueryError(e.to_string())),
-        }
-    }
-}
-
-impl Repository<Exercise> for SqliteExerciseRepository {
-    fn create(&self, exercise: &Exercise) -> TrainerResult<i64> {
-        let description = match &exercise.description {
-            None => "",
-            Some(x) => x,
-        };
-        let e_type: i64 = exercise.exercise_type.into();
-        match self
-            .conn
-            .execute(INSERT, params![exercise.name, description, e_type])
-        {
-            Ok(_) => {
-                let id = self.conn.last_insert_rowid();
-                Ok(id)
             }
             Err(e) => Err(PersistenceError(e.to_string())),
         }
     }
 
-    fn update(&self, t: &Exercise) -> TrainerResult<()> {
-        let mut stmt = self.conn.prepare(UPDATE).unwrap();
-        let result = stmt.execute(params![
-            t.name,
-            t.description.clone().unwrap_or_default(),
-            <api::ExerciseType as Into<i64>>::into(t.exercise_type),
-            t.id.unwrap()
-        ]);
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => Err(PersistenceError(e.to_string())),
-        }
-    }
-
-    fn query_by_name(&self, name: String) -> TrainerResult<Option<Exercise>> {
-        let mut stmt = self.conn.prepare(SELECT_BY_NAME).unwrap();
-        let row = stmt.query_row(&[(":name", &name)], Self::map_exercise);
-        Self::handle_row(row)
-    }
-
-    fn query_by_id(&self, id: i64) -> TrainerResult<Option<Exercise>> {
-        let mut stmt = self.conn.prepare(SELECT_BY_ID).unwrap();
-        let row = stmt.query_row(&[(":id", &id)], Self::map_exercise);
-        Self::handle_row(row)
-    }
-
-    fn list(&self) -> TrainerResult<Vec<Exercise>> {
-        let mut stmt = self.conn.prepare(SELECT_ALL).unwrap();
-        let row_result = stmt.query_map([], Self::map_exercise);
-        match row_result {
-            Ok(rows) => {
-                let mut v: Vec<Exercise> = Vec::new();
-                for row in rows {
-                    v.push(row.unwrap().unwrap())
-                }
-                Ok(v)
+    fn process_query(&self, r: Result<SqliteRow, Error>) -> TrainerResult<Option<Exercise>> {
+        match r {
+            Ok(r) => {
+                println!("{:?}", r.len());
+                let et: i64 = r.get(3);
+                Ok(Some(Exercise {
+                    id: Some(r.get(0)),
+                    name: r.get(1),
+                    description: r.get(2),
+                    exercise_type: i64::into(et),
+                }))
             }
-            Err(e) => Err(QueryError(e.to_string())),
-        }
-    }
-
-    fn delete(&self, t: Exercise) -> TrainerResult<()> {
-        let result = self.conn.execute(SOFT_DELETE, params![t.id.unwrap()]);
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => Err(DeleteError(e.to_string())),
+            Err(e) => match e {
+                Error::RowNotFound => Ok(None),
+                _ => Err(QueryError(e.to_string())),
+            },
         }
     }
 }
@@ -179,21 +162,13 @@ impl Repository<Exercise> for SqliteExerciseRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DBType::{File, InMemory};
-    use api::ExerciseType::Barbell;
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
-    use rstest::*;
-    use std::path::PathBuf;
-    use tempfile::{tempdir, TempDir};
 
-    struct TestConfig {
-        dir: TempDir,
-        file_path: PathBuf,
-        repo: SqliteExerciseRepository,
-    }
+    use api::exercise::ExerciseType::{Barbell, KettleBell};
+    use tempfile::tempdir;
+    use tokio::fs;
 
-    #[fixture]
     fn db_name() -> String {
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
@@ -204,7 +179,6 @@ mod tests {
         format!("testdb-{}.db3", rand_string)
     }
 
-    #[fixture]
     fn deadlift() -> Exercise {
         Exercise {
             id: None,
@@ -214,92 +188,136 @@ mod tests {
         }
     }
 
-    #[fixture]
-    fn benchpress() -> Exercise {
-        Exercise {
-            id: None,
-            name: "Benchpress".to_string(),
-            description: None,
-            exercise_type: ExerciseType::Barbell,
-        }
+    #[tokio::test]
+    async fn test_new_in_memory_connection() {
+        let repo = SqliteExerciseRepository::new(DBType::InMemory).await;
+        assert!(repo.is_ok())
     }
 
-    #[fixture]
-    fn kbswing() -> Exercise {
-        Exercise {
-            id: None,
-            name: "Two-Arm Kettlebell Swing".to_string(),
-            description: None,
-            exercise_type: ExerciseType::KettleBell,
-        }
-    }
-
-    #[fixture]
-    fn test_config() -> TestConfig {
+    #[tokio::test]
+    async fn test_new_file_connection() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
-        let repo = SqliteExerciseRepository::new(File(file_path.as_path())).unwrap();
-        TestConfig {
-            dir: dir,
-            file_path: file_path,
-            repo: repo,
-        }
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path())).await;
+        assert!(repo.is_ok());
     }
 
-    #[test]
-    fn new_in_memory_connection() {
-        let repo_result = SqliteExerciseRepository::new(InMemory);
-        assert!(repo_result.is_ok())
-    }
-
-    #[rstest]
-    fn new_with_file(db_name: String) {
+    #[tokio::test]
+    async fn test_bad_file_path() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join(db_name);
-        let repo_result = SqliteExerciseRepository::new(File(file_path.as_path()));
-        assert!(repo_result.is_ok());
-    }
-
-    #[rstest]
-    fn new_failure(db_name: String) {
-        let dir = tempdir().unwrap();
-        let bad_path = dir.path().join("doesnotexist");
-        let file_path = bad_path.join(db_name);
-        let repo_result = SqliteExerciseRepository::new(File(file_path.clone().as_path()));
+        let file_path = dir.path().join("not-found").join(db_name());
+        let repo_result = SqliteExerciseRepository::new(DBType::File(file_path.as_path())).await;
         assert!(repo_result.is_err());
-
-        let expected_error = format!(
-            "unable to open database file: {}",
-            file_path.into_os_string().into_string().unwrap()
-        );
         assert!(matches!(
             repo_result.err().unwrap(),
-            ConnectionError(s) if s == expected_error
-        ));
+            ConnectionError(s) if s == "error returned from database: (code: 14) unable to open database file"
+        ))
     }
 
-    #[rstest]
-    fn creation_ok(test_config: TestConfig) {
-        let repo = test_config.repo;
-        let result = repo.create(&Exercise {
-            id: None,
-            name: "Deadlift".to_string(),
-            description: None,
-            exercise_type: Barbell,
-        });
+    #[tokio::test]
+    async fn create_ok() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let e = deadlift();
+        let result = repo.create(&e).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 1);
+        assert!(matches!(
+            result,
+            Ok(i) if i > 0
+        ))
     }
 
-    #[rstest]
-    fn query_by_name_ok(test_config: TestConfig, deadlift: Exercise) {
-        let repo = test_config.repo;
-        repo.create(&deadlift).unwrap();
+    #[tokio::test]
+    async fn create_ok_with_description() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
 
+        let mut e = deadlift();
+        e.description = Some("an exercise".to_string());
+        let result = repo.create(&e).await;
+        assert!(result.is_ok());
+        assert!(matches!(
+            result,
+            Ok(i) if i > 0
+        ))
+    }
+
+    #[tokio::test]
+    async fn create_and_get_ok() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let e = deadlift();
+        let id = repo.create(&e).await.unwrap();
+
+        let found_exercise = repo.query_by_id(id).await;
+        assert!(found_exercise.is_ok());
+        let ex = found_exercise.unwrap().unwrap();
+        assert_eq!(ex.id, Some(id));
+        assert_eq!(ex.name, ex.name);
+        assert!(ex.description.is_none());
+        assert_eq!(ex.exercise_type, Barbell);
+    }
+
+    #[tokio::test]
+    async fn create_and_get_with_description() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let mut e = deadlift();
+        e.description = Some("an exercise".to_string());
+        let id = repo.create(&e).await.unwrap();
+
+        let found_exercise = repo.query_by_id(id).await;
+        assert!(found_exercise.is_ok());
+        let ex = found_exercise.unwrap().unwrap();
+        assert_eq!(ex.id, Some(id));
+        assert_eq!(ex.name, ex.name);
+        assert_eq!(ex.description.unwrap(), "an exercise".to_string());
+        assert_eq!(ex.exercise_type, Barbell);
+    }
+
+    #[tokio::test]
+    async fn query_id_not_found() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let found_exercise = repo.query_by_id(100).await;
+        assert!(found_exercise.is_ok());
+        assert!(found_exercise.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn query_by_name_ok() {
         let queries = vec!["Deadlift", "deadlift", "DeadLift", "DEADLIFT", "dEaDlIfT"];
 
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let e = deadlift();
+        let _ = repo.create(&e).await.unwrap();
+
         for q in queries {
-            let query_result = repo.query_by_name(q.to_string());
+            let query_result = repo.query_by_name(q.to_string()).await;
             assert!(query_result.is_ok());
 
             let exercise = query_result.unwrap().unwrap();
@@ -310,161 +328,91 @@ mod tests {
         }
     }
 
-    #[rstest]
-    fn query_a_kb_ok(test_config: TestConfig, kbswing: Exercise) {
-        let repo = test_config.repo;
-        let result = repo.create(&kbswing).unwrap();
-        let query_result = repo.query_by_id(result);
+    #[tokio::test]
+    async fn query_by_name_not_found() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+        let query_result = repo.query_by_name("not-found".to_string()).await;
         assert!(query_result.is_ok());
-
-        let exercise = query_result.unwrap().unwrap();
-        assert_eq!(exercise.id, Some(1));
-        assert_eq!(exercise.name, kbswing.name);
-        assert_eq!(exercise.description, None);
-        assert_eq!(exercise.exercise_type, kbswing.exercise_type);
+        assert!(query_result.unwrap().is_none())
     }
 
-    #[rstest]
-    fn query_by_name_not_found(test_config: TestConfig) {
-        let result = test_config.repo.query_by_name("not_found".to_string());
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), None);
-    }
+    #[tokio::test]
+    async fn update_ok() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
 
-    #[rstest]
-    fn query_by_name_with_description(test_config: TestConfig) {
-        let repo = test_config.repo;
-        repo.create(&Exercise{
-            id: None,
-            name: "Deadlift".to_string(),
-            description: Some("a lift made from a standing position, without the use of a bench or other equipment.".to_string()),
-            exercise_type: Barbell,
-        }).unwrap();
+        let e = deadlift();
+        let id = repo.create(&e).await.unwrap();
 
-        let query_result = repo.query_by_name("Deadlift".to_string());
-        assert!(query_result.is_ok());
+        let mut found_ex = repo.query_by_id(id).await.unwrap().unwrap();
+        found_ex.description = Some("updated description".to_string());
+        found_ex.exercise_type = KettleBell;
+        found_ex.name = "DL".to_string();
 
-        let exercise = query_result.unwrap().unwrap();
-        assert_eq!(exercise.id, Some(1));
-        assert_eq!(exercise.name, "Deadlift");
-        assert_eq!(exercise.description, Some("a lift made from a standing position, without the use of a bench or other equipment.".to_string()));
-        assert_eq!(exercise.exercise_type, Barbell);
-    }
-
-    #[rstest]
-    fn query_by_id_ok(test_config: TestConfig, deadlift: Exercise) {
-        let repo = test_config.repo;
-        let result = repo.create(&deadlift).unwrap();
-
-        let query_result = repo.query_by_id(result);
-        assert!(query_result.is_ok());
-
-        let exercise = query_result.unwrap().unwrap();
-        assert_eq!(exercise.id, Some(1));
-        assert_eq!(exercise.name, "Deadlift");
-        assert_eq!(exercise.description, None);
-        assert_eq!(exercise.exercise_type, Barbell);
-    }
-
-    #[rstest]
-    fn query_by_id_not_found(test_config: TestConfig) {
-        let repo = test_config.repo;
-        let query_result = repo.query_by_id(2000);
-        assert!(query_result.is_ok());
-        assert_eq!(query_result.unwrap(), None);
-    }
-
-    #[rstest]
-    fn list_ok(test_config: TestConfig, deadlift: Exercise, benchpress: Exercise) {
-        let repo = test_config.repo;
-        let _ = repo.create(&deadlift);
-        let _ = repo.create(&benchpress);
-
-        let list_result = repo.list();
-        assert!(list_result.is_ok());
-        let exercises = list_result.unwrap();
-        assert_eq!(2, exercises.len());
-
-        for ex in exercises {
-            assert!(matches!(
-                    ex.id,
-                    Some(i) if i > 0
-            ));
-        }
-    }
-
-    #[rstest]
-    fn delete_ok(test_config: TestConfig, deadlift: Exercise) {
-        let repo = test_config.repo;
-        let id = repo.create(&deadlift).unwrap();
-
-        let mut to_delete = deadlift.clone();
-        to_delete.id = Some(id);
-        let result = repo.delete(to_delete);
-        assert!(result.is_ok());
-
-        //Test that the search returns nothing
-        let search_result = repo.query_by_id(id);
-        assert!(search_result.is_ok());
-        assert_eq!(search_result.unwrap(), None);
-    }
-
-    #[rstest]
-    fn multi_delete_ok(test_config: TestConfig, deadlift: Exercise) {
-        let repo = test_config.repo;
-        let id = repo.create(&deadlift).unwrap();
-
-        let mut to_delete = deadlift.clone();
-        to_delete.id = Some(id);
-        let result = repo.delete(to_delete);
-        assert!(result.is_ok());
-
-        //Test that the search returns nothing
-        let search_result = repo.query_by_id(id);
-        assert!(search_result.is_ok());
-        assert_eq!(search_result.unwrap(), None);
-
-        let search_result = repo.query_by_id(id);
-        assert!(search_result.is_ok());
-        assert_eq!(search_result.unwrap(), None);
-    }
-
-    #[rstest]
-    fn update_ok(test_config: TestConfig, mut deadlift: Exercise) {
-        let repo = test_config.repo;
-        let id = repo.create(&deadlift).unwrap();
-
-        deadlift.id = Some(id.clone());
-        //Make some changes
-        deadlift.description = Some("an update".to_string());
-        deadlift.name = "DEADLIFT".to_string();
-
-        let update_result = repo.update(&deadlift);
+        let update_result = repo.update(&found_ex).await;
         assert!(update_result.is_ok());
 
-        let found_exercise = repo.query_by_id(id).unwrap().unwrap();
-        assert!(matches!(
-            found_exercise.description,
-            Some(s) if s == "an update".to_string()
-        ));
-        assert_eq!(found_exercise.name, "DEADLIFT".to_string())
+        let found_ex = repo.query_by_id(id).await.unwrap().unwrap();
+        assert_eq!(found_ex.name, "DL".to_string());
+        assert_eq!(found_ex.exercise_type, KettleBell);
+        assert_eq!(
+            found_ex.description,
+            Some("updated description".to_string())
+        );
     }
 
-    #[rstest]
-    fn update_with_no_description(test_config: TestConfig, mut deadlift: Exercise) {
-        let repo = test_config.repo;
-        let id = repo.create(&deadlift).unwrap();
+    #[tokio::test]
+    async fn update_not_found() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
 
-        deadlift.id = Some(id.clone());
-        //Make some changes
-        deadlift.description = None;
-        deadlift.name = "DEADLIFT".to_string();
+        let e = deadlift();
+        let update_result = repo.update(&e).await;
+        assert!(update_result.is_err());
+        assert!(matches!(update_result.err().unwrap(),
+            ExerciseNotFound(s) if s == "exercise Deadlift was not found".to_string()));
+    }
 
-        let update_result = repo.update(&deadlift);
-        assert!(update_result.is_ok());
+    #[tokio::test]
+    async fn create_failed() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
 
-        let found_exercise = repo.query_by_id(id).unwrap().unwrap();
-        assert!(matches!(found_exercise.description, None));
-        assert_eq!(found_exercise.name, "DEADLIFT".to_string())
+        //Remove teh db file to test failure modes
+        fs::remove_file(file_path.as_path()).await.unwrap();
+        let e = deadlift();
+        let id = repo.create(&e).await;
+        assert!(id.is_err());
+        assert!(matches!(id.err().unwrap(), PersistenceError(_)))
+    }
+
+    #[tokio::test]
+    async fn create_duplicate_name() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let e = deadlift();
+        let _ = repo.create(&e).await;
+
+        let same_ex = deadlift();
+        let result = repo.create(&same_ex).await;
+        assert!(result.is_err());
+        assert!(matches!(result.err().unwrap(), PersistenceError(_)))
     }
 }
