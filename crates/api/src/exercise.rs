@@ -1,6 +1,7 @@
-use crate::TrainerError::{ConnectionError, ExerciseNotFound, UnknownError};
-use crate::{TrainerError, TrainerResult};
+use crate::TrainerError::{ConnectionError, ExerciseNotFound, LookupError, UnknownError};
+use crate::{RepositoryError, RepositoryResult, TrainerError, TrainerResult};
 use async_trait::async_trait;
+use tracing::{debug, error, info, instrument, span, warn, Level};
 
 #[cfg(test)]
 use mockall::{automock, predicate::*};
@@ -60,11 +61,9 @@ pub trait ExerciseManagement {
 
     async fn get_by_name(&self, name: String) -> TrainerResult<Exercise>;
 
-    async fn get_by_id(&self, id: i64) -> TrainerResult<Exercise>;
-
     async fn list(&self) -> TrainerResult<Vec<Exercise>>;
 
-    async fn delete(&self, exercise: Exercise) -> TrainerResult<()>;
+    async fn delete(&self, name: String) -> TrainerResult<()>;
 }
 
 #[cfg_attr(test, automock)]
@@ -72,18 +71,18 @@ pub trait ExerciseManagement {
 pub trait ExerciseRepository {
     /// Persists Exercise
     /// Will return the repository generated ID in a TrainerResult.
-    /// TrainerError will be a PersistenceError
-    async fn create(&self, exercise: &Exercise) -> TrainerResult<i64>;
+    /// RepositoryError will be a PersistenceError
+    async fn create(&self, exercise: &Exercise) -> RepositoryResult<i64>;
 
-    async fn update(&self, exercise: &Exercise) -> TrainerResult<()>;
+    async fn update(&self, exercise: &Exercise) -> RepositoryResult<()>;
 
-    async fn query_by_name(&self, name: String) -> TrainerResult<Option<Exercise>>;
+    // Retrieves the exercise by its unique name.
+    // Will return an ItemNotFoundError if the item does not exist
+    async fn query_by_name(&self, name: String) -> RepositoryResult<Exercise>;
 
-    async fn query_by_id(&self, id: i64) -> TrainerResult<Option<Exercise>>;
+    async fn list(&self) -> RepositoryResult<Vec<Exercise>>;
 
-    async fn list(&self) -> TrainerResult<Vec<Exercise>>;
-
-    async fn delete(&self, id: i64) -> TrainerResult<()>;
+    async fn delete(&self, name: String) -> RepositoryResult<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -99,48 +98,56 @@ impl<'a, T: ExerciseRepository> ExerciseManager<'a, T> {
 }
 
 #[async_trait]
-impl<T: ExerciseRepository + Sync> ExerciseManagement for ExerciseManager<'_, T> {
+impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for ExerciseManager<'_, T> {
+
     async fn save(&self, _exercise: &mut Exercise) -> TrainerResult<()> {
         todo!()
     }
 
+    #[instrument(skip(self), fields(name = name))]
     async fn get_by_name(&self, name: String) -> TrainerResult<Exercise> {
         match self.repo.query_by_name(name.clone()).await {
-            Ok(o) => match o {
-                None => Err(ExerciseNotFound(name.clone())),
-                Some(e) => Ok(e),
+            Ok(e) => {
+                debug!("exercise found");
+                Ok(e)
             },
             Err(err) => {
                 match err {
-                    TrainerError::ConnectionError(_e) => {
+                    RepositoryError::ConnectionError(e) => {
                         //log the backend error message
-                        Err(ConnectionError(
+                        error!("{}", e);
+                        Err(LookupError(
                             "error searching repository for exercise".to_string(),
                         ))
                     }
-                    _e => Err(UnknownError("unknown error with repository".to_string())),
+                    RepositoryError::ItemNotFoundError => {
+                        debug!("exercise not found");
+                        Err(ExerciseNotFound(name.clone()))
+                    }
+                    err => {
+                        error!("{}", err.to_string());
+                        Err(LookupError("unknown error with repository".to_string()))
+                    },
                 }
             }
         }
-    }
-
-    async fn get_by_id(&self, _id: i64) -> TrainerResult<Exercise> {
-        todo!()
     }
 
     async fn list(&self) -> TrainerResult<Vec<Exercise>> {
         todo!()
     }
 
-    async fn delete(&self, _exercise: Exercise) -> TrainerResult<()> {
+    async fn delete(&self, _name: String) -> TrainerResult<()> {
         todo!()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::RepositoryError::ItemNotFoundError;
     use super::*;
-    use crate::TrainerError;
+    use crate::{RepositoryError, TrainerError};
+    use test_log::test;
 
     #[test]
     fn test_new_ok() {
@@ -149,18 +156,20 @@ mod tests {
         assert!(mgr.is_ok())
     }
 
-    #[tokio::test]
+
+    #[test(tokio::test)]
     async fn test_get_by_name_ok() {
+
         let mut repo = MockExerciseRepository::new();
         repo.expect_query_by_name()
             .with(eq("Deadlift".to_string()))
             .returning(|_string| {
-                Ok(Some(Exercise {
+                Ok(Exercise {
                     id: Some(1),
                     name: "Deadlift".to_string(),
                     description: None,
                     exercise_type: ExerciseType::Barbell,
-                }))
+                })
             });
 
         let mgr = ExerciseManager::new(&repo).unwrap();
@@ -169,12 +178,12 @@ mod tests {
         assert!(get_result.is_ok())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_get_by_name_not_found() {
         let mut repo = MockExerciseRepository::new();
         repo.expect_query_by_name()
             .with(eq("Deadlift".to_string()))
-            .returning(|_string| Ok(None));
+            .returning(|_string| Err(ItemNotFoundError));
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.get_by_name("Deadlift".to_string()).await;
         assert!(result.is_err());
@@ -184,19 +193,77 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_get_by_name_repo_sys_error() {
         let mut repo = MockExerciseRepository::new();
         repo.expect_query_by_name()
             .with(eq("Deadlift".to_string()))
-            .returning(|_string| Err(TrainerError::ConnectionError("db_error".to_string())));
+            .returning(|_string| Err(RepositoryError::ConnectionError("db_error".to_string())));
         let mgr = ExerciseManager::new(&repo).unwrap();
 
         let result = mgr.get_by_name("Deadlift".to_string()).await;
         assert!(result.is_err());
         assert!(matches!(
             result.err().unwrap(),
-            TrainerError::ConnectionError(s) if s == "error searching repository for exercise"
+            TrainerError::LookupError(s) if s == "error searching repository for exercise"
         ))
+    }
+
+    #[test(tokio::test)]
+    async fn test_get_by_name_unknown_repo_error() {
+        let mut repo = MockExerciseRepository::new();
+        repo.expect_query_by_name()
+            .with(eq("Deadlift".to_string()))
+            .returning(|_string| Err(RepositoryError::UnknownError("db_error".to_string())));
+        let mgr = ExerciseManager::new(&repo).unwrap();
+
+        let result = mgr.get_by_name("Deadlift".to_string()).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            TrainerError::LookupError(s) if s == "unknown error with repository"
+        ))
+    }
+
+    #[test]
+    fn from_string_to_exercise_type_ok() {
+        let bbs = vec![
+            "Barbell".to_string(),
+            "BARBELL".to_string(),
+            "bArBeLl".to_string(),
+            "bb".to_string(),
+            "BB".to_string(),
+            "bB".to_string(),
+        ];
+        let kbs = vec![
+            "Kettlebell".to_string(),
+            "KETTLEBELL".to_string(),
+            "kEtTlEbElL".to_string(),
+            "kb".to_string(),
+            "KB".to_string(),
+            "kB".to_string(),
+        ];
+
+        for bb in bbs {
+            let et: ExerciseType = bb.into();
+            assert_eq!(et, ExerciseType::Barbell)
+        }
+
+        for kb in kbs {
+            let et: ExerciseType = kb.into();
+            assert_eq!(et, ExerciseType::KettleBell)
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn from_string_to_exercise_type_fail() {
+        let _: ExerciseType = "not_found".to_string().into();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_bad_i64_for_exercise_type() {
+        let _ = ExerciseType::from(1000);
     }
 }

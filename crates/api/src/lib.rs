@@ -1,12 +1,17 @@
 pub mod exercise;
 
 pub type TrainerResult<T> = Result<T, TrainerError>;
+pub type RepositoryResult<T> = Result<T, RepositoryError>;
+
 
 #[derive(thiserror::Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TrainerError {
     #[error("ExerciseNotFound: {0}")]
     ExerciseNotFound(String),
+
+    #[error("LookupError")]
+    LookupError(String),
 
     #[error("PersistenceError: {0}")]
     PersistenceError(String),
@@ -41,6 +46,9 @@ pub enum RepositoryError {
 
     #[error("DeleteError: {0}")]
     DeleteError(String),
+
+    #[error("ItemNotFoundError")]
+    ItemNotFoundError,
 
     #[error("Unknown: {0}")]
     UnknownError(String),
