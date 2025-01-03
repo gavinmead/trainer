@@ -1,9 +1,9 @@
-mod exercise;
+pub mod exercise;
 
 pub type TrainerResult<T> = Result<T, TrainerError>;
 
 #[derive(thiserror::Error, Debug, Clone)]
-#[allow(non_exhaustive)]
+#[non_exhaustive]
 pub enum TrainerError {
     #[error("ExerciseNotFound: {0}")]
     ExerciseNotFound(String),
@@ -28,7 +28,7 @@ pub enum TrainerError {
 }
 
 #[derive(thiserror::Error, Debug, Clone)]
-#[allow(non_exhaustive)]
+#[non_exhaustive]
 pub enum RepositoryError {
     #[error("PersistenceError: {0}")]
     PersistenceError(String),

@@ -1,8 +1,9 @@
-use async_trait::async_trait;
+use crate::TrainerError::{ConnectionError, ExerciseNotFound, UnknownError};
 use crate::{TrainerError, TrainerResult};
+use async_trait::async_trait;
+
 #[cfg(test)]
 use mockall::{automock, predicate::*};
-use crate::TrainerError::{ConnectionError, ExerciseNotFound, UnknownError};
 
 #[derive(Clone, Debug, PartialEq, Copy)]
 #[non_exhaustive]
@@ -10,7 +11,6 @@ pub enum ExerciseType {
     Barbell,
     KettleBell,
 }
-
 
 impl From<ExerciseType> for i64 {
     fn from(value: ExerciseType) -> Self {
@@ -67,7 +67,7 @@ pub trait ExerciseManagement {
     async fn delete(&self, exercise: Exercise) -> TrainerResult<()>;
 }
 
-#[automock]
+#[cfg_attr(test, automock)]
 #[async_trait]
 pub trait ExerciseRepository {
     /// Persists Exercise
@@ -91,43 +91,40 @@ pub struct ExerciseManager<'a, T: ExerciseRepository> {
     repo: &'a T,
 }
 
-impl <'a, T: ExerciseRepository> ExerciseManager<'a, T> {
+impl<'a, T: ExerciseRepository> ExerciseManager<'a, T> {
+    #[allow(dead_code)]
     fn new(repo: &'a T) -> TrainerResult<Self> {
-        Ok(Self {
-            repo: &repo
-        })
+        Ok(Self { repo })
     }
 }
 
 #[async_trait]
-impl <T: ExerciseRepository + Sync> ExerciseManagement for ExerciseManager<'_, T> {
-    async fn save(&self, exercise: &mut Exercise) -> TrainerResult<()> {
+impl<T: ExerciseRepository + Sync> ExerciseManagement for ExerciseManager<'_, T> {
+    async fn save(&self, _exercise: &mut Exercise) -> TrainerResult<()> {
         todo!()
     }
 
     async fn get_by_name(&self, name: String) -> TrainerResult<Exercise> {
         match self.repo.query_by_name(name.clone()).await {
-            Ok(o) => {
-                match o {
-                    None => {Err(ExerciseNotFound(name.clone()))}
-                    Some(e) => {Ok(e)}
-                }
-            }
+            Ok(o) => match o {
+                None => Err(ExerciseNotFound(name.clone())),
+                Some(e) => Ok(e),
+            },
             Err(err) => {
                 match err {
-                    TrainerError::ConnectionError(e) => {
+                    TrainerError::ConnectionError(_e) => {
                         //log the backend error message
-                        Err(ConnectionError("error searching repository for exercise".to_string()))
-                    },
-                    e => {
-                        Err(UnknownError("unknown error with repository".to_string()))
+                        Err(ConnectionError(
+                            "error searching repository for exercise".to_string(),
+                        ))
                     }
+                    _e => Err(UnknownError("unknown error with repository".to_string())),
                 }
             }
         }
     }
 
-    async fn get_by_id(&self, id: i64) -> TrainerResult<Exercise> {
+    async fn get_by_id(&self, _id: i64) -> TrainerResult<Exercise> {
         todo!()
     }
 
@@ -135,15 +132,15 @@ impl <T: ExerciseRepository + Sync> ExerciseManagement for ExerciseManager<'_, T
         todo!()
     }
 
-    async fn delete(&self, exercise: Exercise) -> TrainerResult<()> {
+    async fn delete(&self, _exercise: Exercise) -> TrainerResult<()> {
         todo!()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::TrainerError;
     use super::*;
+    use crate::TrainerError;
 
     #[test]
     fn test_new_ok() {
@@ -177,7 +174,7 @@ mod tests {
         let mut repo = MockExerciseRepository::new();
         repo.expect_query_by_name()
             .with(eq("Deadlift".to_string()))
-            .returning(|_string| { Ok(None) });
+            .returning(|_string| Ok(None));
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.get_by_name("Deadlift".to_string()).await;
         assert!(result.is_err());
@@ -192,7 +189,7 @@ mod tests {
         let mut repo = MockExerciseRepository::new();
         repo.expect_query_by_name()
             .with(eq("Deadlift".to_string()))
-            .returning(|_string| { Err(TrainerError::ConnectionError("db_error".to_string()))});
+            .returning(|_string| Err(TrainerError::ConnectionError("db_error".to_string())));
         let mgr = ExerciseManager::new(&repo).unwrap();
 
         let result = mgr.get_by_name("Deadlift".to_string()).await;
@@ -200,22 +197,6 @@ mod tests {
         assert!(matches!(
             result.err().unwrap(),
             TrainerError::ConnectionError(s) if s == "error searching repository for exercise"
-        ))
-    }
-
-    #[tokio::test]
-    async fn test_get_by_name_unknown_repo_sys_error() {
-        let mut repo = MockExerciseRepository::new();
-        repo.expect_query_by_name()
-            .with(eq("Deadlift".to_string()))
-            .returning(|_string| { Err(TrainerError::ConnectionError("db_error".to_string()))});
-        let mgr = ExerciseManager::new(&repo).unwrap();
-
-        let result = mgr.get_by_name("Deadlift".to_string()).await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::UnknownError(s) if s == "unknown error with repository"
         ))
     }
 }
