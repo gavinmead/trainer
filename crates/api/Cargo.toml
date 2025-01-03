@@ -10,6 +10,8 @@ repository.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+async-trait = { workspace = true}
+tokio = {workspace = true }
 
 [dev-dependencies]
 mockall = "0.13.1"
