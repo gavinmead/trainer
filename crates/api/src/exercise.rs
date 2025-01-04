@@ -152,7 +152,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                         Ok(_) => {
                             debug!("update to exercise was successful");
                             Ok(())
-                        },
+                        }
                         Err(err) => match err {
                             RepositoryError::PersistenceError(e) => {
                                 error!("{}", e.to_string());
@@ -173,7 +173,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                             let err_msg = "exercise was not found with provided id";
                             error!("{}", err_msg);
                             Err(TrainerError::PersistenceError(err_msg.to_string()))
-                        },
+                        }
                         e => {
                             error!("{}", e.to_string());
                             Err(TrainerError::UnknownError(
@@ -194,7 +194,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
             Ok(e) => {
                 debug!("exercise found");
                 Ok(e)
-            },
+            }
             Err(err) => {
                 match err {
                     RepositoryError::ConnectionError(e) => {
@@ -203,11 +203,11 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                         Err(LookupError(
                             "error searching repository for exercise".to_string(),
                         ))
-                    },
+                    }
                     RepositoryError::ItemNotFoundError => {
                         debug!("exercise not found");
                         Err(ExerciseNotFound(name.clone()))
-                    },
+                    }
                     err => {
                         error!("{}", err.to_string());
                         Err(LookupError("unknown error with repository".to_string()))
