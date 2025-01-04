@@ -3,7 +3,6 @@ pub mod exercise;
 pub type TrainerResult<T> = Result<T, TrainerError>;
 pub type RepositoryResult<T> = Result<T, RepositoryError>;
 
-
 #[derive(thiserror::Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TrainerError {
@@ -49,6 +48,9 @@ pub enum RepositoryError {
 
     #[error("ItemNotFoundError")]
     ItemNotFoundError,
+
+    #[error("DuplicateIdError")]
+    DuplicateIdError,
 
     #[error("Unknown: {0}")]
     UnknownError(String),
