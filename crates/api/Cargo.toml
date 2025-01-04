@@ -10,7 +10,12 @@ repository.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+async-trait = { workspace = true}
+tokio = {workspace = true }
+tracing = { workspace = true }
+log = "0.4.22"
 
 [dev-dependencies]
 mockall = "0.13.1"
 rstest = {workspace = true}
+test-log = {workspace = true}

@@ -15,4 +15,6 @@ thiserror = "2.0.7"
 cargo-tarpaulin = "0.31.3"
 rstest = "0.23.0"
 tokio = { version = "1.42.0", features = ["rt", "macros"] }
-
+async-trait = "0.1.83"
+tracing = "0.1"
+test-log = { version = "0.2.16", features = ["color", "trace"] }
