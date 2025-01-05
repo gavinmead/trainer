@@ -6,7 +6,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{migrate, Acquire, Error, Row, SqlitePool};
 use std::path::Path;
 use std::str::FromStr;
+use tracing::instrument;
 
+#[derive(Clone, Debug)]
 pub enum DBType<'a> {
     InMemory,
     File(&'a Path),
@@ -18,7 +20,7 @@ pub struct SqliteExerciseRepository {
 }
 
 impl SqliteExerciseRepository {
-    #[allow(dead_code)]
+    #[instrument]
     pub async fn new(dbtype: DBType<'_>) -> RepositoryResult<Self> {
         let pool_result: Result<SqlitePool, Error> = match dbtype {
             DBType::InMemory => SqlitePool::connect("sqlite::memory:").await,
@@ -69,6 +71,7 @@ impl SqliteExerciseRepository {
 
 #[async_trait]
 impl ExerciseRepository for SqliteExerciseRepository {
+    #[instrument(skip(self), fields(name = exercise.name))]
     async fn create(&self, exercise: &Exercise) -> RepositoryResult<i64> {
         let mut conn = self.pool.acquire().await.unwrap();
         let query_result = sqlx::query(
@@ -88,6 +91,7 @@ impl ExerciseRepository for SqliteExerciseRepository {
         }
     }
 
+    #[instrument(skip(self), fields(name = exercise.name))]
     async fn update(&self, exercise: &Exercise) -> RepositoryResult<()> {
         let mut conn = self.pool.acquire().await.unwrap();
         let mut tx = conn.begin().await.unwrap();
@@ -124,6 +128,7 @@ impl ExerciseRepository for SqliteExerciseRepository {
         }
     }
 
+    #[instrument(skip(self), fields(name = name))]
     async fn query_by_name(&self, name: String) -> RepositoryResult<Exercise> {
         let mut conn = self.pool.acquire().await.unwrap();
         let query_result = sqlx::query(
@@ -140,6 +145,7 @@ impl ExerciseRepository for SqliteExerciseRepository {
         self.process_query(query_result)
     }
 
+    #[instrument(skip(self), fields(id))]
     async fn query_by_id(&self, id: i64) -> RepositoryResult<Exercise> {
         let mut conn = self.pool.acquire().await.unwrap();
         let query_result = sqlx::query(
@@ -155,6 +161,7 @@ impl ExerciseRepository for SqliteExerciseRepository {
         self.process_query(query_result)
     }
 
+    #[instrument(skip(self))]
     async fn list(&self) -> RepositoryResult<Vec<Exercise>> {
         let mut conn = self.pool.acquire().await.unwrap();
         let query_result = sqlx::query(
@@ -178,6 +185,7 @@ impl ExerciseRepository for SqliteExerciseRepository {
         }
     }
 
+    #[instrument(skip(self), fields(id))]
     async fn delete(&self, id: i64) -> RepositoryResult<()> {
         let mut conn = self.pool.acquire().await.unwrap();
         let update_result = sqlx::query(
@@ -208,6 +216,7 @@ mod tests {
     use api::exercise::ExerciseType::{Barbell, KettleBell};
     use api::RepositoryError::{ConnectionError, PersistenceError};
     use tempfile::tempdir;
+    use test_log::test;
     use tokio::fs;
 
     fn db_name() -> String {
@@ -247,13 +256,13 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_new_in_memory_connection() {
         let repo = SqliteExerciseRepository::new(DBType::InMemory).await;
         assert!(repo.is_ok())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_new_file_connection() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -261,7 +270,7 @@ mod tests {
         assert!(repo.is_ok());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_bad_file_path() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("not-found").join(db_name());
@@ -273,7 +282,7 @@ mod tests {
         ))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_ok() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -290,7 +299,7 @@ mod tests {
         ))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_ok_with_description() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -308,7 +317,7 @@ mod tests {
         ))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_and_get_ok() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -328,7 +337,7 @@ mod tests {
         assert_eq!(ex.exercise_type, Barbell);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_and_get_with_description() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -349,7 +358,7 @@ mod tests {
         assert_eq!(ex.exercise_type, Barbell);
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn query_id_not_found() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -362,7 +371,7 @@ mod tests {
         assert!(matches!(found_exercise.err().unwrap(), ItemNotFoundError))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn query_by_name_ok() {
         let queries = vec!["Deadlift", "deadlift", "DeadLift", "DEADLIFT", "dEaDlIfT"];
 
@@ -387,7 +396,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn query_by_name_not_found() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -399,7 +408,7 @@ mod tests {
         assert!(matches!(query_result.err().unwrap(), ItemNotFoundError))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn update_ok() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -427,7 +436,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn update_not_found() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -444,7 +453,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_failed() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -460,7 +469,7 @@ mod tests {
         assert!(matches!(id.err().unwrap(), PersistenceError(_)))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn create_duplicate_name() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -477,7 +486,7 @@ mod tests {
         assert!(matches!(result.err().unwrap(), PersistenceError(_)))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn list_ok() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -500,7 +509,7 @@ mod tests {
         assert_eq!(3, exercises.len());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn list_ok_no_deleted_items() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -524,7 +533,7 @@ mod tests {
         assert_eq!(2, exercises.len());
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn delete_ok() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
@@ -542,7 +551,7 @@ mod tests {
         assert!(matches!(query_result.err().unwrap(), ItemNotFoundError,))
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn delete_item_not_found() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join(db_name());
