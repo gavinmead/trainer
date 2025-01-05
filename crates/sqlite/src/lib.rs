@@ -14,7 +14,7 @@ pub enum DBType<'a> {
     File(&'a Path),
 }
 
-#[allow(unused)]
+#[derive(Clone, Debug)]
 pub struct SqliteExerciseRepository {
     pool: SqlitePool,
 }

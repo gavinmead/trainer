@@ -96,7 +96,7 @@ pub struct ExerciseManager<'a, T: ExerciseRepository> {
 
 impl<'a, T: ExerciseRepository> ExerciseManager<'a, T> {
     #[allow(dead_code)]
-    fn new(repo: &'a T) -> TrainerResult<Self> {
+    pub fn new(repo: &'a T) -> TrainerResult<Self> {
         Ok(Self { repo })
     }
 
