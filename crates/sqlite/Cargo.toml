@@ -14,7 +14,9 @@ api = {path = "../api"}
 sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio"] }
 tokio = {workspace = true}
 async-trait = {workspace = true}
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.14.0"
 rand = "0.8.5"
+test-log = {workspace = true}
