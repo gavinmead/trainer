@@ -85,6 +85,7 @@ pub trait ExerciseRepository {
 
     async fn list(&self) -> RepositoryResult<Vec<Exercise>>;
 
+    /// Deletes an exercise from the repository
     async fn delete(&self, id: i64) -> RepositoryResult<()>;
 }
 

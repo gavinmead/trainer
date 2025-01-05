@@ -10,13 +10,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-thiserror = { workspace = true }
 api = {path = "../api"}
-rusqlite = { version = "0.32.0", features = ["bundled"] }
 sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio"] }
 tokio = {workspace = true}
+async-trait = {workspace = true}
 
 [dev-dependencies]
 tempfile = "3.14.0"
-rstest = { workspace = true }
 rand = "0.8.5"
