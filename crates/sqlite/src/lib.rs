@@ -1,6 +1,7 @@
-use api::exercise::Exercise;
-use api::TrainerError::{ConnectionError, ExerciseNotFound, PersistenceError, QueryError};
-use api::TrainerResult;
+use api::exercise::{Exercise, ExerciseRepository};
+use api::RepositoryError::{ConnectionError, ItemNotFoundError, QueryError};
+use api::{RepositoryError, RepositoryResult};
+use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{migrate, Acquire, Error, Row, SqlitePool};
 use std::path::Path;
@@ -18,7 +19,7 @@ pub struct SqliteExerciseRepository {
 
 impl SqliteExerciseRepository {
     #[allow(dead_code)]
-    pub async fn new(dbtype: DBType<'_>) -> TrainerResult<Self> {
+    pub async fn new(dbtype: DBType<'_>) -> RepositoryResult<Self> {
         let pool_result: Result<SqlitePool, Error> = match dbtype {
             DBType::InMemory => SqlitePool::connect("sqlite::memory:").await,
             DBType::File(f) => {
@@ -46,44 +47,84 @@ impl SqliteExerciseRepository {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn create(&self, t: &Exercise) -> TrainerResult<i64> {
+    fn process_query(&self, r: Result<SqliteRow, Error>) -> RepositoryResult<Exercise> {
+        match r {
+            Ok(r) => {
+                println!("{:?}", r.len());
+                let et: i64 = r.get(3);
+                Ok(Exercise {
+                    id: Some(r.get(0)),
+                    name: r.get(1),
+                    description: r.get(2),
+                    exercise_type: i64::into(et),
+                })
+            }
+            Err(e) => match e {
+                Error::RowNotFound => Err(RepositoryError::ItemNotFoundError),
+                _ => Err(RepositoryError::QueryError(e.to_string())),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl ExerciseRepository for SqliteExerciseRepository {
+    async fn create(&self, exercise: &Exercise) -> RepositoryResult<i64> {
         let mut conn = self.pool.acquire().await.unwrap();
         let query_result = sqlx::query(
             r#"
                 INSERT INTO EXERCISE (name, description, exercise_type) VALUES (?1, ?2, ?3)
                 "#,
         )
-        .bind(&t.name)
-        .bind(&t.description)
-        .bind::<i64>(t.exercise_type.into())
+        .bind(&exercise.name)
+        .bind(&exercise.description)
+        .bind::<i64>(exercise.exercise_type.into())
         .execute(&mut *conn)
         .await;
 
         match query_result {
             Ok(r) => Ok(r.last_insert_rowid()),
-            Err(e) => Err(PersistenceError(e.to_string())),
+            Err(e) => Err(RepositoryError::PersistenceError(e.to_string())),
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn query_by_id(&self, id: i64) -> TrainerResult<Option<Exercise>> {
+    async fn update(&self, exercise: &Exercise) -> RepositoryResult<()> {
         let mut conn = self.pool.acquire().await.unwrap();
-        let query_result = sqlx::query(
+        let mut tx = conn.begin().await.unwrap();
+        let update_result = sqlx::query(
             r#"
-                SELECT id, name, description, exercise_type
-                FROM EXERCISE WHERE id = ?1 AND deleted = 0
+                UPDATE EXERCISE set name = ?1, description = ?2,
+                exercise_type = ?3 WHERE id = ?4
                 "#,
         )
-        .bind(id)
-        .fetch_one(&mut *conn)
+        .bind(&exercise.name)
+        .bind(&exercise.description)
+        .bind::<i64>(exercise.exercise_type.into())
+        .bind(exercise.id)
+        .execute(&mut *tx)
         .await;
 
-        self.process_query(query_result)
+        match update_result {
+            Ok(r) => {
+                if r.rows_affected() == 1 {
+                    let commit_result = tx.commit().await;
+                    match commit_result {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(RepositoryError::PersistenceError(e.to_string())),
+                    }
+                } else {
+                    let rollback_result = tx.rollback().await;
+                    match rollback_result {
+                        Ok(_) => Err(RepositoryError::ItemNotFoundError),
+                        Err(e) => Err(RepositoryError::PersistenceError(e.to_string())),
+                    }
+                }
+            }
+            Err(e) => Err(RepositoryError::PersistenceError(e.to_string())),
+        }
     }
 
-    #[allow(dead_code)]
-    pub async fn query_by_name(&self, name: String) -> TrainerResult<Option<Exercise>> {
+    async fn query_by_name(&self, name: String) -> RepositoryResult<Exercise> {
         let mut conn = self.pool.acquire().await.unwrap();
         let query_result = sqlx::query(
             r#"
@@ -99,62 +140,61 @@ impl SqliteExerciseRepository {
         self.process_query(query_result)
     }
 
-    #[allow(dead_code)]
-    pub async fn update(&self, t: &Exercise) -> TrainerResult<()> {
+    async fn query_by_id(&self, id: i64) -> RepositoryResult<Exercise> {
         let mut conn = self.pool.acquire().await.unwrap();
-        let mut tx = conn.begin().await.unwrap();
-        let update_result = sqlx::query(
+        let query_result = sqlx::query(
             r#"
-                UPDATE EXERCISE set name = ?1, description = ?2,
-                exercise_type = ?3 WHERE id = ?4
+                SELECT id, name, description, exercise_type
+                FROM EXERCISE WHERE id = ?1 AND deleted = 0
                 "#,
         )
-        .bind(&t.name)
-        .bind(&t.description)
-        .bind::<i64>(t.exercise_type.into())
-        .bind(t.id)
-        .execute(&mut *tx)
+        .bind(id)
+        .fetch_one(&mut *conn)
         .await;
 
-        match update_result {
-            Ok(r) => {
-                if r.rows_affected() == 1 {
-                    let commit_result = tx.commit().await;
-                    match commit_result {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(PersistenceError(e.to_string())),
-                    }
-                } else {
-                    let rollback_result = tx.rollback().await;
-                    match rollback_result {
-                        Ok(_) => Err(ExerciseNotFound(format!(
-                            "exercise {} was not found",
-                            t.name.clone()
-                        ))),
-                        Err(e) => Err(PersistenceError(e.to_string())),
-                    }
+        self.process_query(query_result)
+    }
+
+    async fn list(&self) -> RepositoryResult<Vec<Exercise>> {
+        let mut conn = self.pool.acquire().await.unwrap();
+        let query_result = sqlx::query(
+            r#"
+            SELECT id, name, description, exercise_type FROM
+            EXERCISE WHERE DELETED = 0;
+            "#,
+        )
+        .fetch_all(&mut *conn)
+        .await;
+        match query_result {
+            Ok(rows) => {
+                let mut exercises: Vec<Exercise> = vec![];
+                for row in rows {
+                    let r = self.process_query(Ok(row)).unwrap();
+                    exercises.push(r)
                 }
+                Ok(exercises)
             }
-            Err(e) => Err(PersistenceError(e.to_string())),
+            Err(err) => Err(QueryError(err.to_string())),
         }
     }
 
-    fn process_query(&self, r: Result<SqliteRow, Error>) -> TrainerResult<Option<Exercise>> {
-        match r {
-            Ok(r) => {
-                println!("{:?}", r.len());
-                let et: i64 = r.get(3);
-                Ok(Some(Exercise {
-                    id: Some(r.get(0)),
-                    name: r.get(1),
-                    description: r.get(2),
-                    exercise_type: i64::into(et),
-                }))
-            }
-            Err(e) => match e {
-                Error::RowNotFound => Ok(None),
-                _ => Err(QueryError(e.to_string())),
+    async fn delete(&self, id: i64) -> RepositoryResult<()> {
+        let mut conn = self.pool.acquire().await.unwrap();
+        let update_result = sqlx::query(
+            r#"
+            UPDATE EXERCISE SET deleted = 1 WHERE id = ?1
+        "#,
+        )
+        .bind(id)
+        .execute(&mut *conn)
+        .await;
+        match update_result {
+            Ok(result) => match result.rows_affected() {
+                0 => Err(ItemNotFoundError),
+                1 => Ok(()),
+                _ => panic!("more than one row was updated which should be impossible"),
             },
+            Err(err) => Err(RepositoryError::DeleteError(err.to_string())),
         }
     }
 }
@@ -166,6 +206,7 @@ mod tests {
     use rand::{thread_rng, Rng};
 
     use api::exercise::ExerciseType::{Barbell, KettleBell};
+    use api::RepositoryError::{ConnectionError, PersistenceError};
     use tempfile::tempdir;
     use tokio::fs;
 
@@ -179,10 +220,28 @@ mod tests {
         format!("testdb-{}.db3", rand_string)
     }
 
-    fn deadlift() -> Exercise {
+    fn deadlift(id: Option<i64>) -> Exercise {
         Exercise {
-            id: None,
+            id,
             name: "Deadlift".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        }
+    }
+
+    fn benchpress(id: Option<i64>) -> Exercise {
+        Exercise {
+            id,
+            name: "Benchpress".to_string(),
+            description: None,
+            exercise_type: Barbell,
+        }
+    }
+
+    fn squat(id: Option<i64>) -> Exercise {
+        Exercise {
+            id,
+            name: "Squat".to_string(),
             description: None,
             exercise_type: Barbell,
         }
@@ -222,7 +281,7 @@ mod tests {
             .await
             .unwrap();
 
-        let e = deadlift();
+        let e = deadlift(None);
         let result = repo.create(&e).await;
         assert!(result.is_ok());
         assert!(matches!(
@@ -239,7 +298,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut e = deadlift();
+        let mut e = deadlift(None);
         e.description = Some("an exercise".to_string());
         let result = repo.create(&e).await;
         assert!(result.is_ok());
@@ -257,12 +316,12 @@ mod tests {
             .await
             .unwrap();
 
-        let e = deadlift();
+        let e = deadlift(None);
         let id = repo.create(&e).await.unwrap();
 
         let found_exercise = repo.query_by_id(id).await;
         assert!(found_exercise.is_ok());
-        let ex = found_exercise.unwrap().unwrap();
+        let ex = found_exercise.unwrap();
         assert_eq!(ex.id, Some(id));
         assert_eq!(ex.name, ex.name);
         assert!(ex.description.is_none());
@@ -277,13 +336,13 @@ mod tests {
             .await
             .unwrap();
 
-        let mut e = deadlift();
+        let mut e = deadlift(None);
         e.description = Some("an exercise".to_string());
         let id = repo.create(&e).await.unwrap();
 
         let found_exercise = repo.query_by_id(id).await;
         assert!(found_exercise.is_ok());
-        let ex = found_exercise.unwrap().unwrap();
+        let ex = found_exercise.unwrap();
         assert_eq!(ex.id, Some(id));
         assert_eq!(ex.name, ex.name);
         assert_eq!(ex.description.unwrap(), "an exercise".to_string());
@@ -299,8 +358,8 @@ mod tests {
             .unwrap();
 
         let found_exercise = repo.query_by_id(100).await;
-        assert!(found_exercise.is_ok());
-        assert!(found_exercise.unwrap().is_none());
+        assert!(found_exercise.is_err());
+        assert!(matches!(found_exercise.err().unwrap(), ItemNotFoundError))
     }
 
     #[tokio::test]
@@ -313,14 +372,14 @@ mod tests {
             .await
             .unwrap();
 
-        let e = deadlift();
+        let e = deadlift(None);
         let _ = repo.create(&e).await.unwrap();
 
         for q in queries {
             let query_result = repo.query_by_name(q.to_string()).await;
             assert!(query_result.is_ok());
 
-            let exercise = query_result.unwrap().unwrap();
+            let exercise = query_result.unwrap();
             assert_eq!(exercise.id, Some(1));
             assert_eq!(exercise.name, "Deadlift");
             assert_eq!(exercise.description, None);
@@ -336,8 +395,8 @@ mod tests {
             .await
             .unwrap();
         let query_result = repo.query_by_name("not-found".to_string()).await;
-        assert!(query_result.is_ok());
-        assert!(query_result.unwrap().is_none())
+        assert!(query_result.is_err());
+        assert!(matches!(query_result.err().unwrap(), ItemNotFoundError))
     }
 
     #[tokio::test]
@@ -348,10 +407,10 @@ mod tests {
             .await
             .unwrap();
 
-        let e = deadlift();
+        let e = deadlift(None);
         let id = repo.create(&e).await.unwrap();
 
-        let mut found_ex = repo.query_by_id(id).await.unwrap().unwrap();
+        let mut found_ex = repo.query_by_id(id).await.unwrap();
         found_ex.description = Some("updated description".to_string());
         found_ex.exercise_type = KettleBell;
         found_ex.name = "DL".to_string();
@@ -359,7 +418,7 @@ mod tests {
         let update_result = repo.update(&found_ex).await;
         assert!(update_result.is_ok());
 
-        let found_ex = repo.query_by_id(id).await.unwrap().unwrap();
+        let found_ex = repo.query_by_id(id).await.unwrap();
         assert_eq!(found_ex.name, "DL".to_string());
         assert_eq!(found_ex.exercise_type, KettleBell);
         assert_eq!(
@@ -376,11 +435,13 @@ mod tests {
             .await
             .unwrap();
 
-        let e = deadlift();
+        let e = deadlift(None);
         let update_result = repo.update(&e).await;
         assert!(update_result.is_err());
-        assert!(matches!(update_result.err().unwrap(),
-            ExerciseNotFound(s) if s == "exercise Deadlift was not found".to_string()));
+        assert!(matches!(
+            update_result.err().unwrap(),
+            RepositoryError::ItemNotFoundError
+        ));
     }
 
     #[tokio::test]
@@ -393,7 +454,7 @@ mod tests {
 
         //Remove teh db file to test failure modes
         fs::remove_file(file_path.as_path()).await.unwrap();
-        let e = deadlift();
+        let e = deadlift(None);
         let id = repo.create(&e).await;
         assert!(id.is_err());
         assert!(matches!(id.err().unwrap(), PersistenceError(_)))
@@ -407,12 +468,90 @@ mod tests {
             .await
             .unwrap();
 
-        let e = deadlift();
+        let e = deadlift(None);
         let _ = repo.create(&e).await;
 
-        let same_ex = deadlift();
+        let same_ex = deadlift(None);
         let result = repo.create(&same_ex).await;
         assert!(result.is_err());
         assert!(matches!(result.err().unwrap(), PersistenceError(_)))
+    }
+
+    #[tokio::test]
+    async fn list_ok() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let dl = deadlift(None);
+        let bp = benchpress(None);
+        let sq = squat(None);
+
+        repo.create(&dl).await.unwrap();
+        repo.create(&bp).await.unwrap();
+        repo.create(&sq).await.unwrap();
+
+        let list_result = repo.list().await;
+        assert!(list_result.is_ok());
+
+        let exercises = list_result.unwrap();
+        assert_eq!(3, exercises.len());
+    }
+
+    #[tokio::test]
+    async fn list_ok_no_deleted_items() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let dl = deadlift(None);
+        let bp = benchpress(None);
+        let sq = squat(None);
+
+        repo.create(&dl).await.unwrap();
+        repo.create(&bp).await.unwrap();
+        let id = repo.create(&sq).await.unwrap();
+        repo.delete(id).await.unwrap();
+
+        let list_result = repo.list().await;
+        assert!(list_result.is_ok());
+
+        let exercises = list_result.unwrap();
+        assert_eq!(2, exercises.len());
+    }
+
+    #[tokio::test]
+    async fn delete_ok() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+        let dl = deadlift(None);
+        let id = repo.create(&dl).await.unwrap();
+        let delete_result = repo.delete(id.clone()).await;
+        assert!(delete_result.is_ok());
+
+        //Make sure the items is not returned
+        let query_result = repo.query_by_id(id).await;
+        assert!(query_result.is_err());
+        assert!(matches!(query_result.err().unwrap(), ItemNotFoundError,))
+    }
+
+    #[tokio::test]
+    async fn delete_item_not_found() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join(db_name());
+        let repo = SqliteExerciseRepository::new(DBType::File(file_path.as_path()))
+            .await
+            .unwrap();
+
+        let delete_result = repo.delete(1000).await;
+        assert!(delete_result.is_err());
+        assert!(matches!(delete_result.err().unwrap(), ItemNotFoundError,))
     }
 }
