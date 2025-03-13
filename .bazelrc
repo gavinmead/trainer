@@ -1,0 +1,5 @@
+# Enable C++23
+build --cxxopt='-std=c++23'
+build --host_cxxopt='-std=c++23
+common --enable_bzlmod
+

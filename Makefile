@@ -1,78 +1,59 @@
-.PHONY: all build test clean check fmt lint doc run release
+# Makefile for C++23 project using Bazel
+
+# Bazel settings
+BAZEL = bazel
+BAZEL_OUTPUT_USER_ROOT = $(shell pwd)/bazel-output
+BAZEL_STARTUP_FLAGS = --output_user_root=$(BAZEL_OUTPUT_USER_ROOT)
+BAZEL_BUILD_FLAGS = --enable_bzlmod --show_progress_rate_limit=1
+BAZEL_TEST_FLAGS = --enable_bzlmod --test_output=errors
+
+# Main targets
+MAIN_TARGET = //src:main
+TEST_TARGET = //tests:all_tests
+ALL_TESTS = //...
+
+# Directories
+BUILD_DIR = build
+BIN_DIR = $(BUILD_DIR)/bin
 
 # Default target
-all: check test build
+all: build
 
-# Build the project in debug mode
+# Create build directory
+$(BUILD_DIR):
+	mkdir -p $@
+
+# Build the main program
 build:
-	cargo build
+	$(BAZEL) $(BAZEL_STARTUP_FLAGS) build $(BAZEL_BUILD_FLAGS) $(MAIN_TARGET)
+	@mkdir -p $(BIN_DIR)
+	@cp -f bazel-bin/src/main $(BIN_DIR)/main
 
-# Build for release
-release:
-	cargo build --release
-
-# Run the project
-run:
-	cargo run
+# Run the main program
+run: build
+	$(BIN_DIR)/main
 
 # Run tests
 test:
-	cargo test
-	cargo test --doc
+	$(BAZEL) $(BAZEL_STARTUP_FLAGS) test $(BAZEL_TEST_FLAGS) $(TEST_TARGET)
 
-# Clean build artifacts
+# Run all tests
+test-all:
+	$(BAZEL) $(BAZEL_STARTUP_FLAGS) test $(BAZEL_TEST_FLAGS) $(ALL_TESTS)
+
+# Clean Bazel artifacts
 clean:
-	cargo clean
-	rm -rf target/
+	$(BAZEL) $(BAZEL_STARTUP_FLAGS) clean
+	rm -rf $(BUILD_DIR)
 
-# Format code
-fmt:
-	cargo fmt
-	cargo fix --allow-dirty --allow-staged
+# Clean everything, including Bazel cache
+clean-all: clean
+	rm -rf $(BAZEL_OUTPUT_USER_ROOT)
 
-# Run clippy lints
-lint:
-	cargo clippy -- -D warnings
+# Show info about Bazel setup
+info:
+	$(BAZEL) $(BAZEL_STARTUP_FLAGS) info
 
-# Check if the project compiles
-check:
-	cargo check
+# Phony targets
+.PHONY: all build run test test-all clean clean-all info
 
-# Generate documentation
-doc:
-	cargo doc --no-deps
-	cargo doc --open
-
-# Watch for changes and run tests
-watch-test:
-	cargo watch -x test
-
-# Watch for changes and run the project
-watch-run:
-	cargo watch -x run
-
-# Update dependencies
-update:
-	cargo update
-
-# Run security audit
-audit:
-	cargo audit
-
-# Check formatting
-fmt-check:
-	cargo fmt -- --check
-
-# Build and run with release optimizations
-run-release: release
-	cargo run --release
-
-# Show dependency tree
-deps:
-	cargo tree
-
-cov:
-	cargo tarpaulin --engine llvm --out Html
-	open tarpaulin-report.html
-
-pre-commit: fmt fmt-check lint test
