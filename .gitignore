@@ -90,3 +90,5 @@ callgrind.out.*
 perf.data*
 
 .clwb/
+cmake-build-debug/
+cmmake-build-release/
