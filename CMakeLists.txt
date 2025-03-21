@@ -39,11 +39,11 @@ if(ENABLE_CODE_COVERAGE)
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
                 COMMAND LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/coverage.profraw ${CMAKE_CTEST_COMMAND} --output-on-failure
                 COMMAND llvm-profdata merge -sparse ${CMAKE_BINARY_DIR}/coverage/coverage.profraw -o ${CMAKE_BINARY_DIR}/coverage/coverage.profdata
-                COMMAND llvm-cov show $<TARGET_FILE:test> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -show-line-counts-or-regions -output-dir=${CMAKE_BINARY_DIR}/coverage -format=html
-                COMMAND llvm-cov export $<TARGET_FILE:test> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -format=lcov > ${CMAKE_BINARY_DIR}/coverage/coverage.lcov
+                COMMAND llvm-cov show $<TARGET_FILE:${PROJECT_NAME}_tests> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -show-line-counts-or-regions -output-dir=${CMAKE_BINARY_DIR}/coverage -format=html
+                COMMAND llvm-cov export $<TARGET_FILE:${PROJECT_NAME}_tests> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -format=lcov > ${CMAKE_BINARY_DIR}/coverage/coverage.lcov
                 WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
                 COMMENT "Generating coverage report"
-                DEPENDS test
+                DEPENDS ${PROJECT_NAME}_tests
         )
 
         add_custom_target(codecov
@@ -58,15 +58,7 @@ if(ENABLE_CODE_COVERAGE)
 endif()
 
 file(GLOB_RECURSE LIBRARY_SOURCES "src/*.cc")
-#
-#list(LENGTH directory_contents dir_length)
-#if(dir_length GREATER 0)
-#    # Create static library
-#    add_library(${PROJECT_NAME} STATIC ${LIBRARY_SOURCES})
-#else()
-#    # Directory is empty
-#    message(STATUS "Directory ${YOUR_DIRECTORY} is empty.")
-#endif()
+
 add_library(${PROJECT_NAME} STATIC ${LIBRARY_SOURCES})
 target_include_directories(${PROJECT_NAME}
         PUBLIC
