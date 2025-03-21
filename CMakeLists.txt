@@ -36,9 +36,9 @@ if(ENABLE_CODE_COVERAGE)
         add_custom_target(coverage
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
                 COMMAND LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/coverage.profraw ${CMAKE_CTEST_COMMAND} --output-on-failure
-                COMMAND xcrun llvm-profdata merge -sparse ${CMAKE_BINARY_DIR}/coverage/coverage.profraw -o ${CMAKE_BINARY_DIR}/coverage/coverage.profdata
-                COMMAND xcrun llvm-cov show $<TARGET_FILE:tests> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -show-line-counts-or-regions -output-dir=${CMAKE_BINARY_DIR}/coverage -format=html
-                COMMAND xcrun llvm-cov export $<TARGET_FILE:tests> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -format=lcov > ${CMAKE_BINARY_DIR}/coverage/coverage.lcov
+                COMMAND llvm-profdata merge -sparse ${CMAKE_BINARY_DIR}/coverage/coverage.profraw -o ${CMAKE_BINARY_DIR}/coverage/coverage.profdata
+                COMMAND llvm-cov show $<TARGET_FILE:tests> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -show-line-counts-or-regions -output-dir=${CMAKE_BINARY_DIR}/coverage -format=html
+                COMMAND llvm-cov export $<TARGET_FILE:tests> -instr-profile=${CMAKE_BINARY_DIR}/coverage/coverage.profdata -format=lcov > ${CMAKE_BINARY_DIR}/coverage/coverage.lcov
                 WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
                 COMMENT "Generating coverage report"
                 DEPENDS tests
