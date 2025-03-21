@@ -4,6 +4,8 @@ project(trainer)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
 # Add clang-format target if the program is found
 find_program(CLANG_FORMAT "clang-format")
 if(CLANG_FORMAT)
