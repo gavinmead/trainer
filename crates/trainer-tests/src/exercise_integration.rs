@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod exercise_tests {
     use api::exercise::ExerciseType::Barbell;
-    use api::exercise::{Exercise, ExerciseManagement, ExerciseManager};
+    use api::{Exercise, ExerciseManagement, ExerciseManager};
     use rand::distributions::Alphanumeric;
     use rand::{thread_rng, Rng};
     use sqlite::{DBType, SqliteExerciseRepository};

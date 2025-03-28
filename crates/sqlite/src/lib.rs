@@ -1,4 +1,5 @@
-use api::exercise::{Exercise, ExerciseRepository};
+use api::Exercise;
+use api::ExerciseRepository;
 use api::RepositoryError::{ConnectionError, ItemNotFoundError, QueryError};
 use api::{RepositoryError, RepositoryResult};
 use async_trait::async_trait;

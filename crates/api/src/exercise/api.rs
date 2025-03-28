@@ -1,92 +1,20 @@
-use crate::TrainerError::{ExerciseNotFound, LookupError};
-use crate::{RepositoryError, RepositoryResult, TrainerError, TrainerResult};
+use crate::exercise::error;
+use crate::repository::ExerciseRepository;
+use crate::{Exercise, ExerciseError, RepositoryError};
 use async_trait::async_trait;
+use error::ExerciseResult;
 use tracing::{debug, error, instrument};
-
-#[cfg(test)]
-use mockall::{automock, predicate::*};
-
-#[derive(Clone, Debug, PartialEq, Copy)]
-#[non_exhaustive]
-pub enum ExerciseType {
-    Barbell,
-    KettleBell,
-}
-
-impl From<ExerciseType> for i64 {
-    fn from(value: ExerciseType) -> Self {
-        match value {
-            ExerciseType::Barbell => 0,
-            ExerciseType::KettleBell => 1,
-        }
-    }
-}
-
-impl From<i64> for ExerciseType {
-    fn from(value: i64) -> Self {
-        match value {
-            0 => ExerciseType::Barbell,
-            1 => ExerciseType::KettleBell,
-            _ => panic!("unsupported value"),
-        }
-    }
-}
-
-impl From<String> for ExerciseType {
-    fn from(value: String) -> Self {
-        let lower = value.to_lowercase();
-        match lower.as_str() {
-            "barbell" => ExerciseType::Barbell,
-            "bb" => ExerciseType::Barbell,
-            "kettlebell" => ExerciseType::KettleBell,
-            "kb" => ExerciseType::KettleBell,
-            _ => panic!("unsupported value"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)] //this is temporary until code base evolves
-pub struct Exercise {
-    pub id: Option<i64>,
-    pub name: String,
-    pub description: Option<String>,
-    pub exercise_type: ExerciseType,
-}
 
 #[async_trait]
 pub trait ExerciseManagement {
     // Will create or update an exercise
-    async fn save(&self, exercise: &mut Exercise) -> TrainerResult<()>;
+    async fn save(&self, exercise: &mut Exercise) -> ExerciseResult<()>;
 
-    async fn get_by_name(&self, name: String) -> TrainerResult<Exercise>;
+    async fn get_by_name(&self, name: String) -> ExerciseResult<Exercise>;
 
-    async fn list(&self) -> TrainerResult<Vec<Exercise>>;
+    async fn list(&self) -> ExerciseResult<Vec<Exercise>>;
 
-    async fn delete(&self, name: String) -> TrainerResult<()>;
-}
-
-#[cfg_attr(test, automock)]
-#[async_trait]
-pub trait ExerciseRepository {
-    /// Persists Exercise
-    /// Will return the repository generated ID in a TrainerResult.
-    /// RepositoryError will be a PersistenceError
-    async fn create(&self, exercise: &Exercise) -> RepositoryResult<i64>;
-
-    async fn update(&self, exercise: &Exercise) -> RepositoryResult<()>;
-
-    // Retrieves the exercise by its unique name.
-    // Will return an ItemNotFoundError if the item does not exist
-    async fn query_by_name(&self, name: String) -> RepositoryResult<Exercise>;
-
-    // Will return an ItemNotFoundError if the item does not exist
-    async fn query_by_id(&self, id: i64) -> RepositoryResult<Exercise>;
-
-    async fn list(&self) -> RepositoryResult<Vec<Exercise>>;
-
-    /// Deletes an exercise from the repository
-    async fn delete(&self, id: i64) -> RepositoryResult<()>;
+    async fn delete(&self, name: String) -> ExerciseResult<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -96,11 +24,11 @@ pub struct ExerciseManager<'a, T: ExerciseRepository> {
 
 impl<'a, T: ExerciseRepository> ExerciseManager<'a, T> {
     #[allow(dead_code)]
-    pub fn new(repo: &'a T) -> TrainerResult<Self> {
+    pub fn new(repo: &'a T) -> ExerciseResult<Self> {
         Ok(Self { repo })
     }
 
-    async fn process_save(&self, exercise: &mut Exercise) -> TrainerResult<()> {
+    async fn process_save(&self, exercise: &mut Exercise) -> ExerciseResult<()> {
         let create_result = self.repo.create(exercise).await;
         match create_result {
             Ok(id) => {
@@ -111,15 +39,11 @@ impl<'a, T: ExerciseRepository> ExerciseManager<'a, T> {
             Err(err) => match err {
                 RepositoryError::PersistenceError(err) => {
                     error!("{}", err);
-                    Err(TrainerError::PersistenceError(
-                        "an error occurred while creating a new exercise".to_string(),
-                    ))
+                    Err(ExerciseError::SaveFailed)
                 }
                 e => {
                     error!("{}", e.to_string());
-                    Err(TrainerError::UnknownError(
-                        "an unknown error occurred while creating a new exercise".to_string(),
-                    ))
+                    Err(ExerciseError::UnknownError)
                 }
             },
         }
@@ -141,7 +65,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
     //! exercise is not found in the repository
     //! * A [`TrainerError::UnknownError`] if there is some other problem saving the exercise
     #[instrument(skip(self), fields(name = exercise.name))]
-    async fn save(&self, exercise: &mut Exercise) -> TrainerResult<()> {
+    async fn save(&self, exercise: &mut Exercise) -> ExerciseResult<()> {
         match exercise.id {
             None => self.process_save(exercise).await,
             Some(id) => {
@@ -157,15 +81,11 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                         Err(err) => match err {
                             RepositoryError::PersistenceError(e) => {
                                 error!("{}", e.to_string());
-                                Err(TrainerError::PersistenceError(
-                                    "an error occurred while updating exercise".to_string(),
-                                ))
+                                Err(ExerciseError::SaveFailed)
                             }
                             e => {
                                 error!("{}", e.to_string());
-                                Err(TrainerError::UnknownError(
-                                    "an unknown error occurred while updating exercise".to_string(),
-                                ))
+                                Err(ExerciseError::UnknownError)
                             }
                         },
                     },
@@ -173,14 +93,11 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                         RepositoryError::ItemNotFoundError => {
                             let err_msg = "exercise was not found with provided id";
                             error!("{}", err_msg);
-                            Err(TrainerError::PersistenceError(err_msg.to_string()))
+                            Err(ExerciseError::ExerciseNotFoundError)
                         }
                         e => {
                             error!("{}", e.to_string());
-                            Err(TrainerError::UnknownError(
-                                "an error occurred while searching for existing exercise"
-                                    .to_string(),
-                            ))
+                            Err(ExerciseError::UnknownError)
                         }
                     },
                 }
@@ -190,7 +107,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
 
     // Retrieves an exercise by name (case-insensitive).  Every exercise name *MUST* be unique
     #[instrument(skip(self), fields(name = name))]
-    async fn get_by_name(&self, name: String) -> TrainerResult<Exercise> {
+    async fn get_by_name(&self, name: String) -> ExerciseResult<Exercise> {
         match self.repo.query_by_name(name.clone()).await {
             Ok(e) => {
                 debug!("exercise found");
@@ -201,17 +118,15 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                     RepositoryError::ConnectionError(e) => {
                         //log the backend error message
                         error!("{}", e);
-                        Err(LookupError(
-                            "error searching repository for exercise".to_string(),
-                        ))
+                        Err(ExerciseError::LookupError)
                     }
                     RepositoryError::ItemNotFoundError => {
                         debug!("exercise not found");
-                        Err(ExerciseNotFound(name.clone()))
+                        Err(ExerciseError::ExerciseNotFoundError)
                     }
                     err => {
                         error!("{}", err.to_string());
-                        Err(LookupError("unknown error with repository".to_string()))
+                        Err(ExerciseError::LookupError)
                     }
                 }
             }
@@ -224,14 +139,12 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
     ///* [`Ok`]` with the list of exercises
     ///* A [`TrainerError::QueryError`] if there is a problem retrieving the list
     #[instrument(skip(self))]
-    async fn list(&self) -> TrainerResult<Vec<Exercise>> {
+    async fn list(&self) -> ExerciseResult<Vec<Exercise>> {
         match self.repo.list().await {
             Ok(exercises) => Ok(exercises),
             Err(err) => {
                 error!("{}", err.to_string());
-                Err(TrainerError::QueryError(
-                    "an error occurred while retrieving the list of exercises".to_string(),
-                ))
+                Err(ExerciseError::LookupError)
             }
         }
     }
@@ -245,7 +158,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
     /// * [`TrainerError::ExerciseNotFound`] if the exercise was not found
     /// * [`TrainerError::QueryError`] if there was error while looking up the id
     #[instrument(skip(self), fields(name = name))]
-    async fn delete(&self, name: String) -> TrainerResult<()> {
+    async fn delete(&self, name: String) -> ExerciseResult<()> {
         //Get the id by searching the name
         match self.repo.query_by_name(name).await {
             Ok(exercise) => {
@@ -254,9 +167,7 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                     Ok(_) => Ok(()),
                     Err(err) => {
                         error!("{}", err.to_string());
-                        Err(TrainerError::DeleteError(
-                            "an error occurred while deleting the exercise".to_string(),
-                        ))
+                        Err(ExerciseError::DeleteFailed)
                     }
                 }
             }
@@ -264,24 +175,23 @@ impl<T: ExerciseRepository + Sync + std::fmt::Debug> ExerciseManagement for Exer
                 RepositoryError::ItemNotFoundError => {
                     let err_msg = "exercise was not found";
                     error!("{}", err_msg);
-                    Err(TrainerError::ExerciseNotFound(err_msg.to_string()))
+                    Err(ExerciseError::ExerciseNotFoundError)
                 }
                 err => {
                     error!("{}", err.to_string());
-                    Err(TrainerError::QueryError(
-                        "an error occurred while retrieving id for exercise".to_string(),
-                    ))
+                    Err(ExerciseError::UnknownError)
                 }
             },
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ExerciseError::ExerciseNotFoundError;
     use crate::RepositoryError::ItemNotFoundError;
-    use crate::{RepositoryError, TrainerError};
+    use crate::{ExerciseType, MockExerciseRepository};
+    use mockall::predicate::eq;
     use mockall::Sequence;
     use test_log::test;
 
@@ -339,10 +249,7 @@ mod tests {
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.get_by_name("Deadlift".to_string()).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            ExerciseNotFound(s) if s == "Deadlift"
-        ));
+        assert!(matches!(result.err().unwrap(), ExerciseNotFoundError,));
     }
 
     #[test(tokio::test)]
@@ -355,10 +262,7 @@ mod tests {
 
         let result = mgr.get_by_name("Deadlift".to_string()).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::LookupError(s) if s == "error searching repository for exercise"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::LookupError))
     }
 
     #[test(tokio::test)]
@@ -371,10 +275,7 @@ mod tests {
 
         let result = mgr.get_by_name("Deadlift".to_string()).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::LookupError(s) if s == "unknown error with repository"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::LookupError))
     }
 
     #[test(tokio::test)]
@@ -402,10 +303,7 @@ mod tests {
         let mut exercise = deadlift(None);
         let result = mgr.save(&mut exercise).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::PersistenceError(s) if s == "an error occurred while creating a new exercise"
-        ));
+        assert!(matches!(result.err().unwrap(), ExerciseError::SaveFailed));
     }
 
     #[test(tokio::test)]
@@ -418,10 +316,7 @@ mod tests {
         let mut exercise = deadlift(None);
         let result = mgr.save(&mut exercise).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::UnknownError(s) if s == "an unknown error occurred while creating a new exercise"
-        ));
+        assert!(matches!(result.err().unwrap(), ExerciseError::UnknownError));
     }
 
     #[test(tokio::test)]
@@ -463,10 +358,7 @@ mod tests {
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.save(&mut dl).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::PersistenceError(s) if s == "exercise was not found with provided id"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseNotFoundError))
     }
 
     #[test(tokio::test)]
@@ -484,10 +376,7 @@ mod tests {
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.save(&mut dl).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::UnknownError(s) if s == "an error occurred while searching for existing exercise"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::UnknownError))
     }
 
     #[test(tokio::test)]
@@ -512,10 +401,7 @@ mod tests {
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.save(&mut dl).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::PersistenceError(s) if s == "an error occurred while updating exercise"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::SaveFailed))
     }
 
     #[test(tokio::test)]
@@ -540,10 +426,7 @@ mod tests {
         let mgr = ExerciseManager::new(&repo).unwrap();
         let result = mgr.save(&mut dl).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::UnknownError(s) if s == "an unknown error occurred while updating exercise"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::UnknownError))
     }
 
     #[test(tokio::test)]
@@ -575,10 +458,7 @@ mod tests {
         let result = mgr.list().await;
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::QueryError(s) if s == "an error occurred while retrieving the list of exercises"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::LookupError))
     }
 
     #[test(tokio::test)]
@@ -625,10 +505,7 @@ mod tests {
         let dl = deadlift(Some(1000));
         let result = mgr.delete(dl.name).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::DeleteError(s) if s == "an error occurred while deleting the exercise"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::DeleteFailed))
     }
 
     #[test(tokio::test)]
@@ -654,7 +531,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err().unwrap(),
-            TrainerError::ExerciseNotFound(_)
+            ExerciseError::ExerciseNotFoundError
         ))
     }
 
@@ -671,10 +548,7 @@ mod tests {
         let dl = deadlift(Some(1000));
         let result = mgr.delete(dl.name).await;
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            TrainerError::QueryError(s) if s == "an error occurred while retrieving id for exercise"
-        ))
+        assert!(matches!(result.err().unwrap(), ExerciseError::UnknownError))
     }
 
     #[test]
