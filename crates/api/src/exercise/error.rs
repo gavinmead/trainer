@@ -1,4 +1,4 @@
-pub type ExerciseResult<T> = std::result::Result<T, ExerciseError>;
+pub type ExerciseResult<T, E = ExerciseError> = Result<T, E>;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ExerciseError {
@@ -9,7 +9,7 @@ pub enum ExerciseError {
     UnknownError,
 }
 
-pub type RepositoryResult<T> = Result<T, crate::RepositoryError>;
+pub type RepositoryResult<T, E = RepositoryError> = Result<T, E>;
 
 #[derive(thiserror::Error, Debug, Clone)]
 #[non_exhaustive]
